@@ -1,121 +1,275 @@
-﻿
+﻿/************************************************************************************************
+*						This code is written by Mohammed Ali Alawi Shehab
+*						Publication name :Speed Up Needleman-Wunsch Global Alignment Algorithm Using GPU Technique
+*						URL				: https://www.researchgate.net/publication/292977570_Speed_Up_Needleman-Wunsch_Global_Alignment_Algorithm_Using_GPU_Technique#feedback/198672
+*						Authors			:  Maged Fakirah,  Mohammed A. Shehab,  Yaser Jararweh and Mahmoud Al-Ayyoub
+*						INSTITUTION		: Jordan University of Science and Technology, Irbid, Jordan
+*						DEPARTMENT		: Department of Computer Science
+*************************************************************************************************/
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-
+#include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <assert.h>
+#include <math.h>
+#include <time.h>
+#define MIN(x,y) ((x) < (y) ? (x) : (y))
 
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
-
-__global__ void addKernel(int *c, const int *a, const int *b)
+__global__ void ShihabKernel(char* Adata, char* Bdata, int slice, int z, int blen, int* NewH, int Increment, int Max)
 {
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
+	//int i = threadIdx.x;
+
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int i = ((gridDim.x * blockDim.x) * y) + x;
+
+	if (i <= Max)
+	{
+		int match = 0;
+		int mismatch = 1;
+
+		int startIndex;
+		if (z <= 0)
+		{
+			startIndex = slice;
+		}
+		else
+		{
+			startIndex = Increment * z + slice;
+		}
+
+		int j = startIndex + (i * Increment);
+
+		int row = j / blen;
+		int column = j % blen;
+
+		if (row == 0 || column == 0)
+		{
+			return;
+		}
+
+		int score = (Adata[row - 1] == Bdata[column - 1]) ? match : mismatch;
+		NewH[column + row * blen] = MIN(NewH[(column - 1) + (row - 1) * blen] + score, MIN(NewH[(column)+(row - 1) * blen] + 1, NewH[(column - 1) + (row)*blen] + 1));
+	}
 }
 
-int main()
+__global__ void init_rows(int* NewH, int blen)
 {
-    const int arraySize = 5;
-    const int a[arraySize] = { 1, 2, 3, 4, 5 };
-    const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    int c[arraySize] = { 0 };
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int i = ((gridDim.x * blockDim.x) * y) + x;
 
-    // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
-        return 1;
-    }
 
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
+	int row = i / blen;
+	int column = i % blen;
 
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
-
-    return 0;
+	if (row == 0 && column > 0)
+	{
+		NewH[column + row * blen] = i;
+	}
 }
 
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
+__global__ void init_columns(int* NewH, int blen)
 {
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
+	int y = blockIdx.y * blockDim.y + threadIdx.y;
+	int x = blockIdx.x * blockDim.x + threadIdx.x;
+	int i = ((gridDim.x * blockDim.x) * y) + x;
 
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
 
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	int row = i / blen;
+	int column = i % blen;
 
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+	if (column == 0 && row > 0)
+	{
+		NewH[column + row * blen] = row;
+	}
+}
 
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
+char GetNewChar(int num)
+{
+	char c = 'A';
 
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+	switch (num)
+	{
+	case 0: c = 'A'; break;
+	case 1: c = 'C'; break;
+	case 2: c = 'G'; break;
+	case 3: c = 'T'; break;
+	}
+	return c;
+}
+int main(int argc, char* argv[])
+{
+	char* a;
+	char* b;
+	clock_t CPUbegin, CPUend;
+	clock_t GPUbegin, GPUend;
+	long double time_spentCPU, time_spentGPU;
+	long int LENGHT = 0;
 
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+	printf("Enter the lenght of string: ");
+	scanf("%ld", &LENGHT);
 
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
+	a = (char*)malloc(LENGHT * sizeof(char));
+	b = (char*)malloc(LENGHT * sizeof(char));
+	long int t;
 
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
+	for (t = 0; t < LENGHT; ++t)
+	{
+		//This loop for initialize Random two sequences DNA
+		int num = rand() % 4;
 
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
+		a[t] = GetNewChar(num);
+		num = rand() % 4;
+		b[t] = GetNewChar(num);
+	}
+	// Write end of string to stop reading process
+	a[t] = '\0';
+	b[t] = '\0';
 
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
+	int i, j;
+	int score;
+
+	int alen = strlen(a) + 1;
+	int blen = strlen(b) + 1;
+	int* NewH;
+	int* H;
+
+
+	NewH = (int*)malloc(alen * blen * sizeof(int));
+	H = (int*)malloc(alen * blen * sizeof(int));
+
+	//------------------Initializing The Matricies-------------------
+
+	int* dev_H = 0;
+	char* dev_a;
+	char* dev_b;
+
+	NewH[0] = 0;
+	H[0] = 0;
+
+	CPUbegin = clock();										//begain time of CPU
+	//Initilize the first row and columns
+	for (i = 1; i < blen; ++i)
+	{
+		H[i] = i;
+	}
+
+	for (j = 1; j < alen; j++)
+	{
+		H[blen * j] = j;
+	}
+
+	//---------------------Filling The Matricies----------------------
+	// The Diagonal technique CPU section
+
+	for (int slice = 0; slice < 2 * alen - 1; ++slice)
+	{
+		int z = slice < alen ? 0 : slice - alen + 1;
+		for (int j = z; j <= slice - z; ++j)
+		{
+			int row = j;
+			int column = (slice - j);
+
+			if (row == 0 || column == 0)
+			{
+				continue;
+			}
+			score = (a[row - 1] == b[column - 1]) ? 0 : 1;
+			H[(column)+row * blen] = MIN(H[(column - 1) + (row - 1) * blen] + score, MIN(H[(column)+(row - 1) * blen] + 1, H[(column - 1) + (row)*blen] + 1));
+
+		}
+	}
+
+	CPUend = clock();										//End time of CPU
+	time_spentCPU = (double)(CPUend - CPUbegin) / CLOCKS_PER_SEC;
+	printf("CPU time = %lf Sec\n", time_spentCPU);
+
+
+	//Here This Block of code is to Print data after finishing code
+
+	//printf("\n____________CPU_______________\n");
+
+	// for(int r = 0 ; r < alen ; r++)   
+	// {
+	//   for(int c = 0 ; c < blen ; c++)
+	//{
+	//	 //printf("Type a number for <line: %d, column: %d>\t", i, j);
+	//	printf("%3d ", H[r *blen +c]);// printf("\n");
+	//}
+	//     printf("\n");
+	// }
+
+
+
+	cudaSetDevice(0);
+
+	//Create memory allocation in GPU
+	cudaMalloc((void**)&dev_H, alen * blen * sizeof(int));
+	cudaMalloc((void**)&dev_a, LENGHT * sizeof(char));
+	cudaMalloc((void**)&dev_b, LENGHT * sizeof(char));
+
+	GPUbegin = clock();
+	//Copy all arrays to GPU memory
+	cudaMemcpy(dev_H, NewH, alen * blen * sizeof(int), cudaMemcpyHostToDevice);
+
+	const int NumberOfThreads = 256;
+	dim3 ThreadsWarp(32, 8);
+	// Here run initionlize in GPU side
+
+	init_rows <<<ThreadsWarp, alen >> > (dev_H, blen);
+	init_columns <<<ThreadsWarp, blen >> > (dev_H, blen);
+
+
+	//cudaMemcpy(H, dev_H,  alen * blen  * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaMemcpy(dev_a, a, LENGHT * sizeof(char), cudaMemcpyHostToDevice);
+	cudaMemcpy(dev_b, b, LENGHT * sizeof(char), cudaMemcpyHostToDevice);
+
+
+	//Set GPU for parallel working
+
+	int size = (int)ceil((float)blen / (float)NumberOfThreads);
+	int Increment = alen - 1;
+	//begain time of GPU
+	int MemSize = alen * blen;
+	for (int slice = 0; slice < 2 * alen - 1; ++slice)
+	{
+		int z = slice < alen ? 0 : slice - alen + 1;//CPU
+		size = (int)ceil((float)((slice - 2 * z) + 1));
+
+		ShihabKernel <<<ThreadsWarp, MemSize >> > (dev_a, dev_b, slice, z, alen, dev_H, Increment, size);
+	}
+
+	cudaMemcpy(NewH, dev_H, alen * blen * sizeof(int), cudaMemcpyDeviceToHost);
+	GPUend = clock();								//End time of GPU
+
+	time_spentGPU = (double)(GPUend - GPUbegin) / CLOCKS_PER_SEC;
+	printf("\nGPU time = %lf Sec\n", time_spentGPU);
+
+	/*cudaMemcpy(a, dev_a,  LENGHT * sizeof(char), cudaMemcpyDeviceToHost);
+	cudaMemcpy(b, dev_b, LENGHT  * sizeof(char), cudaMemcpyDeviceToHost);
+	printf("a = %s\nb = %s\n",a,b);*/
+	cudaFree(dev_a);
+	cudaFree(dev_b);
+	cudaFree(dev_H);
+	cudaDeviceReset();
+
+
+	//---------------------printing the matricies---------------------
+
+
+	// printf("\n____________GPU_______________\n");
+
+	// for(int r = 0 ; r < alen ; r++)   
+	// {
+	//   for(int c = 0 ; c < blen ; c++)
+	//{
+	//	// printf("Type a number for <line: %d, column: %d>\t", i, j);
+	//	printf("%3d ", NewH[r *blen +c]);// printf("\n");
+	//}
+	//     printf("\n");
+	// }
+
+	return (0);
 }
