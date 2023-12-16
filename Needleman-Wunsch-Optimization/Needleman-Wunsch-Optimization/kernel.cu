@@ -99,6 +99,7 @@ char GetNewChar(int num)
 	}
 	return c;
 }
+
 int main(int argc, char* argv[])
 {
 	char* a;
