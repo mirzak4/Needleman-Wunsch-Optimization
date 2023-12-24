@@ -9,13 +9,10 @@
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "device_functions.h"
-#include <stdio.h>
 #include <string.h>
-#include <assert.h>
-#include <time.h>
 #include <vector>
 #include <iostream>
-#include <stdlib.h>
+#include <random>
 #define max(x,y) ((x) > (y) ? (x) : (y))
 #define min(x,y)  ((x) < (y) ? (x) : (y))
 #define alphabet "ACGT"
@@ -23,7 +20,12 @@
 // Common Methods
 char get_char()
 {
-    int rand_index = rand() % 4;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    // Define a uniform distribution in the range [0, RAND_MAX]
+    std::uniform_int_distribution<int> distribution(0, 3);
+    int rand_index = distribution(gen);
     return alphabet[rand_index];
 }
 
@@ -238,6 +240,9 @@ std::vector<std::vector<int>> sequence_alignment_gpu(std::string sequence_1, std
     std::vector<std::vector<int>> ad_rows = split_into_anti_diagonal_rows(score_matrix);
 
     char* sequence_1_device, * sequence_2_device;
+
+
+    // Allocate memory and initialize subsequences needed for current ad
     cudaMalloc(&sequence_1_device, sequence_1.length() * sizeof(char));
     cudaMalloc(&sequence_2_device, sequence_2.length() * sizeof(char));
 
@@ -250,14 +255,18 @@ std::vector<std::vector<int>> sequence_alignment_gpu(std::string sequence_1, std
         std::vector<int>& row_hv = (i > 1) ? ad_rows[i - 1] : std::vector<int>(m + 1, 0);
         std::vector<int>& row_current = ad_rows[i];
 
-        int *row_d_device = nullptr, *row_hv_device = nullptr, *row_current_device = nullptr;
-
-        dim3 grid_size(1);
-        dim3 block_size(row_current.size());
+        // Alloate memory and initialize three ad vectors: current, d and hv on GPU
+        int *row_d_device, *row_hv_device, *row_current_device;
+        cudaMalloc(&row_d_device, row_d.size() * sizeof(int) * sizeof(char));
+        cudaMalloc(&row_hv_device, row_hv.size() * sizeof(int) * sizeof(char));
+        cudaMalloc(&row_current_device, row_current.size() * sizeof(int) * sizeof(char));
 
         cudaMemcpy(row_d_device, &row_d[0], row_d.size() * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(row_hv_device, &row_hv[0], row_hv.size() * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(row_current_device, &row_current[0], row_current.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+        dim3 grid_size(1);
+        dim3 block_size(row_current.size());
 
         for (int j = 0; j < row_current.size(); ++j)
         {
@@ -272,8 +281,11 @@ std::vector<std::vector<int>> sequence_alignment_gpu(std::string sequence_1, std
 
 int main(int argc, char* argv[])
 {
-    std::string sequence_1 = "AACTTAAAAACTAGT";
-    std::string sequence_2 = "CTCTTTACCTTATGT";
+    std::string sequence_1 = generate_sequence(15);
+    std::string sequence_2 = generate_sequence(15);
+
+    std::cout << "Sequence 1: " << sequence_1 << std::endl;
+    std::cout << "Sequence 2: " << sequence_2 << std::endl;
 
     // CPU Method
     //std::vector<std::vector<int>> ad_rows = sequence_alignment_cpu(sequence_1, sequence_2);
@@ -291,6 +303,7 @@ int main(int argc, char* argv[])
     // GPU Method
     std::vector<std::vector<int>> ad_rows = sequence_alignment_gpu(sequence_1, sequence_2);
 
+    std::cout << "Score matrix (anti-diagonal order): " << std::endl;
     for (int i = 0; i < ad_rows.size(); i++)
     {
         for (int j = 0; j < ad_rows[i].size(); j++)
