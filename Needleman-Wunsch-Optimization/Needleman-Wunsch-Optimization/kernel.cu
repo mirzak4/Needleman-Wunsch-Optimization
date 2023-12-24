@@ -8,269 +8,297 @@
 *************************************************************************************************/
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-#include <stdlib.h>
+#include "device_functions.h"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include <math.h>
 #include <time.h>
-#define MIN(x,y) ((x) < (y) ? (x) : (y))
+#include <vector>
+#include <iostream>
+#include <stdlib.h>
+#define max(x,y) ((x) > (y) ? (x) : (y))
+#define min(x,y)  ((x) < (y) ? (x) : (y))
+#define alphabet "ACGT"
 
-__global__ void ShihabKernel(char* Adata, char* Bdata, int slice, int z, int blen, int* NewH, int Increment, int Max)
+// Common Methods
+char get_char()
 {
-	//int i = threadIdx.x;
-
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int i = ((gridDim.x * blockDim.x) * y) + x;
-
-	if (i <= Max)
-	{
-		int match = 0;
-		int mismatch = 1;
-
-		int startIndex;
-		if (z <= 0)
-		{
-			startIndex = slice;
-		}
-		else
-		{
-			startIndex = Increment * z + slice;
-		}
-
-		int j = startIndex + (i * Increment);
-
-		int row = j / blen;
-		int column = j % blen;
-
-		if (row == 0 || column == 0)
-		{
-			return;
-		}
-
-		int score = (Adata[row - 1] == Bdata[column - 1]) ? match : mismatch;
-		NewH[column + row * blen] = MIN(NewH[(column - 1) + (row - 1) * blen] + score, MIN(NewH[(column)+(row - 1) * blen] + 1, NewH[(column - 1) + (row)*blen] + 1));
-	}
+    int rand_index = rand() % 4;
+    return alphabet[rand_index];
 }
 
-__global__ void init_rows(int* NewH, int blen)
+std::string generate_sequence(int size)
 {
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int i = ((gridDim.x * blockDim.x) * y) + x;
+    std::string result = "";
+    for (int i = 0; i < size; i++)
+    {
+        result.push_back(get_char());
+    }
 
-
-	int row = i / blen;
-	int column = i % blen;
-
-	if (row == 0 && column > 0)
-	{
-		NewH[column + row * blen] = i;
-	}
+    return result;
 }
 
-__global__ void init_columns(int* NewH, int blen)
+// CPU AD Methods
+int get_original_row(int num_of_cols, int ad_row_index, int ad_cell_index)
 {
-	int y = blockIdx.y * blockDim.y + threadIdx.y;
-	int x = blockIdx.x * blockDim.x + threadIdx.x;
-	int i = ((gridDim.x * blockDim.x) * y) + x;
-
-
-	int row = i / blen;
-	int column = i % blen;
-
-	if (column == 0 && row > 0)
-	{
-		NewH[column + row * blen] = row;
-	}
+    return ad_row_index >= num_of_cols ? ad_row_index - num_of_cols + ad_cell_index + 1 : ad_cell_index;
 }
 
-char GetNewChar(int num)
+int get_original_column(int num_of_cols, int ad_row_index, int ad_cell_index)
 {
-	char c = 'A';
+    return min(ad_row_index, num_of_cols - 1) - ad_cell_index;
+}
 
-	switch (num)
-	{
-	case 0: c = 'A'; break;
-	case 1: c = 'C'; break;
-	case 2: c = 'G'; break;
-	case 3: c = 'T'; break;
-	}
-	return c;
+int get_cell_score(char x, char y, int score)
+{
+    return x == y ? score : -score;
+}
+
+std::vector<std::vector<int>> split_into_anti_diagonal_rows(const std::vector<std::vector<int>>& matrix) {
+    int m = matrix.size();
+    int n = matrix[0].size();
+    std::vector<std::vector<int>> anti_diagonals;
+
+    // Create a flipped matrix
+    std::vector<std::vector<int>> flipped_matrix(m, std::vector<int>(n, 0));
+    for (int i = 0; i < m; ++i) {
+        for (int j = 0; j < n; ++j) {
+            flipped_matrix[i][j] = matrix[i][n - 1 - j];
+        }
+    }
+
+    for (int d = 0; d < m + n - 1; ++d) {
+        int offset = n - 1 - d;
+        std::vector<int> anti_diagonal;
+
+        for (int i = 0; i < m; ++i) {
+            int j = i + offset;
+            if (j >= 0 && j < n) {
+                anti_diagonal.push_back(flipped_matrix[i][j]);
+            }
+        }
+
+        anti_diagonals.push_back(anti_diagonal);
+    }
+
+    return anti_diagonals;
+}
+
+std::vector<std::vector<int>> sequence_alignment_cpu(std::string sequence_1, std::string sequence_2)
+{
+    int gap_penalty = -2;
+    int score = 1;
+
+    int m = sequence_1.length();
+    int n = sequence_2.length();
+
+    std::vector<std::vector<int>> score_matrix(m + 1, std::vector<int>(n + 1, 0));
+
+    std::vector<std::vector<int>> ad_rows = split_into_anti_diagonal_rows(score_matrix);
+
+    for (int i = 0; i < ad_rows.size(); ++i) {
+        // In every iteration, initialize two other anti-diagonals needed for calculation of the current anti-diagonal
+        std::vector<int>& row_d = (i > 1) ? ad_rows[i - 2] : std::vector<int>(m + 1, 0);
+        std::vector<int>& row_hv = (i > 1) ? ad_rows[i - 1] : std::vector<int>(m + 1, 0);
+        std::vector<int>& row_current = ad_rows[i];
+
+        // Iterate through elements of the current ad
+        for (int j = 0; j < row_current.size(); ++j) {
+            // To calculate the current cell's score, obtain the original position of that element inside the matrix
+            int original_i = get_original_row(n + 1, i, j);
+            int original_j = get_original_column(n + 1, i, j);
+
+            // Former
+            // c[j] = hv[j-1], hv[j], d[j-1]
+            if (i < n + 1) {
+                if (original_i == 0 || original_j == 0) {
+                    row_current[j] = i * gap_penalty;
+                }
+                else {
+                    int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
+                    row_current[j] = max(row_d[j - 1] + cell_score, max(row_hv[j - 1] + gap_penalty, row_hv[j] + gap_penalty));
+                }
+            }
+            // Mid
+            // c[j] = hv[j], hv[j+1], d[j]
+            else if (i == n + 1) {
+                if (original_i == 0 || original_j == 0) {
+                    row_current[j] = i * gap_penalty;
+                }
+                else {
+                    int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
+                    row_current[j] = max(row_d[j] + cell_score, max(row_hv[j] + gap_penalty, row_hv[j + 1] + gap_penalty));
+                }
+            }
+            // Latter
+            // c[j] = hv[j], hv[j+1], d[j+1]
+            else {
+                if (original_i == 0 || original_j == 0) {
+                    row_current[j] = i * gap_penalty;
+                }
+                else {
+                    int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
+                    row_current[j] = max(row_d[j + 1] + cell_score, max(row_hv[j] + gap_penalty, row_hv[j + 1] + gap_penalty));
+                }
+            }
+        }
+    }
+
+    return ad_rows;
+}
+
+// GPU AD Methods
+__device__ int device_min(int x, int y)
+{
+    return x < y ? x : y;
+}
+
+__device__ int device_max(int x, int y)
+{
+    return x > y ? x : y;
+}
+
+__device__ int device_get_original_row(int num_of_cols, int ad_row_index, int ad_cell_index)
+{
+    return ad_row_index >= num_of_cols ? ad_row_index - num_of_cols + ad_cell_index + 1 : ad_cell_index;
+}
+
+__device__ int device_get_original_column(int num_of_cols, int ad_row_index, int ad_cell_index)
+{
+    return device_min(ad_row_index, num_of_cols - 1) - ad_cell_index;
+}
+
+__device__ int device_get_cell_score(char x, char y, int score)
+{
+    return x == y ? score : -score;
+}
+
+__global__ void ad_kernel(char* subsequence_1, char* subsequence_2, int* row_current, int* row_d, int* row_hv, int current_row_index, int m, int n, int score, int gap_penalty)
+{
+    int i = current_row_index;
+    int j = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+    int original_i = device_get_original_row(n + 1, i, j);
+    int original_j = device_get_original_column(n + 1, i, j);
+
+    // Former
+    // c[j] = hv[j - 1], hv[j], d[j - 1]
+    if (i < n + 1)
+    {
+        if (original_i == 0 || original_j == 0)
+        {
+            row_current[j] = i * gap_penalty;
+        }
+        else
+        {
+            int cell_score = device_get_cell_score(subsequence_1[original_i - 1], subsequence_2[original_j - 1], score);
+            row_current[j] = device_max(row_d[j - 1] + cell_score, device_max(row_hv[j - 1] + gap_penalty, row_hv[j] + gap_penalty));
+        }
+    }
+    // Mid
+    // c[j] = hv[j], hv[j+1], d[j]
+    else if (i == n + 1)
+    {
+        if (original_i == 0 || original_j == 0)
+        {
+            row_current[j] = i * gap_penalty;
+        }
+        else
+        {
+            int cell_score = device_get_cell_score(subsequence_1[original_i - 1], subsequence_2[original_j - 1], score);
+            row_current[j] = device_max(row_d[j] + cell_score, device_max(row_hv[j] + gap_penalty, row_hv[j + 1] + gap_penalty));
+        }
+    }
+    // Latter
+    else
+    {
+        if (original_i == 0 || original_j == 0)
+        {
+            row_current[j] = i * gap_penalty;
+        }
+        else
+        {
+            int cell_score = device_get_cell_score(subsequence_1[original_i - 1], subsequence_2[original_j - 1], score);
+            row_current[j] = device_max(row_d[j + 1] + cell_score, device_max(row_hv[j] + gap_penalty, row_hv[j + 1] + gap_penalty));
+        }
+    }
+}
+
+std::vector<std::vector<int>> sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
+{
+    int gap_penalty = -2;
+    int score = 1;
+
+    int m = sequence_1.length();
+    int n = sequence_2.length();
+
+    // Refactor this part !!!
+    std::vector<std::vector<int>> score_matrix(m + 1, std::vector<int>(n + 1, 0));
+
+    std::vector<std::vector<int>> ad_rows = split_into_anti_diagonal_rows(score_matrix);
+
+    char* sequence_1_device, * sequence_2_device;
+    cudaMalloc(&sequence_1_device, sequence_1.length() * sizeof(char));
+    cudaMalloc(&sequence_2_device, sequence_2.length() * sizeof(char));
+
+    cudaMemcpy(sequence_1_device, sequence_1.c_str(), sequence_1.length() * sizeof(char), cudaMemcpyHostToDevice);
+    cudaMemcpy(sequence_2_device, sequence_2.c_str(), sequence_2.length() * sizeof(char), cudaMemcpyHostToDevice);
+
+    for (int i = 0; i < ad_rows.size(); ++i) 
+    {
+        std::vector<int>& row_d = (i > 1) ? ad_rows[i - 2] : std::vector<int>(m + 1, 0);
+        std::vector<int>& row_hv = (i > 1) ? ad_rows[i - 1] : std::vector<int>(m + 1, 0);
+        std::vector<int>& row_current = ad_rows[i];
+
+        int *row_d_device = nullptr, *row_hv_device = nullptr, *row_current_device = nullptr;
+
+        dim3 grid_size(1);
+        dim3 block_size(row_current.size());
+
+        cudaMemcpy(row_d_device, &row_d[0], row_d.size() * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(row_hv_device, &row_hv[0], row_hv.size() * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(row_current_device, &row_current[0], row_current.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+        for (int j = 0; j < row_current.size(); ++j)
+        {
+            ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, i, m, n, score, gap_penalty);
+        }
+
+        cudaMemcpy(&row_current[0], row_current_device, row_current.size() * sizeof(int), cudaMemcpyDeviceToHost);
+    }
+
+    return ad_rows;
 }
 
 int main(int argc, char* argv[])
 {
-	char* a;
-	char* b;
-	clock_t CPUbegin, CPUend;
-	clock_t GPUbegin, GPUend;
-	long double time_spentCPU, time_spentGPU;
-	long int LENGHT = 0;
+    std::string sequence_1 = "AACTTAAAAACTAGT";
+    std::string sequence_2 = "CTCTTTACCTTATGT";
 
-	printf("Enter the lenght of string: ");
-	scanf("%ld", &LENGHT);
+    // CPU Method
+    //std::vector<std::vector<int>> ad_rows = sequence_alignment_cpu(sequence_1, sequence_2);
 
-	a = (char*)malloc(LENGHT * sizeof(char));
-	b = (char*)malloc(LENGHT * sizeof(char));
-	long int t;
+    //for (int i = 0; i < ad_rows.size(); i++)
+    //{
+    //    for (int j = 0; j < ad_rows[i].size(); j++)
+    //    {
+    //        std::cout << ad_rows[i][j] << " ";
+    //    }
+    //    
+    //    std::cout << std::endl;
+    //}
 
-	for (t = 0; t < LENGHT; ++t)
-	{
-		//This loop for initialize Random two sequences DNA
-		int num = rand() % 4;
+    // GPU Method
+    std::vector<std::vector<int>> ad_rows = sequence_alignment_gpu(sequence_1, sequence_2);
 
-		a[t] = GetNewChar(num);
-		num = rand() % 4;
-		b[t] = GetNewChar(num);
-	}
-	// Write end of string to stop reading process
-	a[t] = '\0';
-	b[t] = '\0';
+    for (int i = 0; i < ad_rows.size(); i++)
+    {
+        for (int j = 0; j < ad_rows[i].size(); j++)
+        {
+            std::cout << ad_rows[i][j] << " ";
+        }
 
-	int i, j;
-	int score;
+        std::cout << std::endl;
+    }
 
-	int alen = strlen(a) + 1;
-	int blen = strlen(b) + 1;
-	int* NewH;
-	int* H;
-
-
-	NewH = (int*)malloc(alen * blen * sizeof(int));
-	H = (int*)malloc(alen * blen * sizeof(int));
-
-	//------------------Initializing The Matricies-------------------
-
-	int* dev_H = 0;
-	char* dev_a;
-	char* dev_b;
-
-	NewH[0] = 0;
-	H[0] = 0;
-
-	CPUbegin = clock();										//begain time of CPU
-	//Initilize the first row and columns
-	for (i = 1; i < blen; ++i)
-	{
-		H[i] = i;
-	}
-
-	for (j = 1; j < alen; j++)
-	{
-		H[blen * j] = j;
-	}
-
-	//---------------------Filling The Matricies----------------------
-	// The Diagonal technique CPU section
-
-	for (int slice = 0; slice < 2 * alen - 1; ++slice)
-	{
-		int z = slice < alen ? 0 : slice - alen + 1;
-		for (int j = z; j <= slice - z; ++j)
-		{
-			int row = j;
-			int column = (slice - j);
-
-			if (row == 0 || column == 0)
-			{
-				continue;
-			}
-			score = (a[row - 1] == b[column - 1]) ? 0 : 1;
-			H[(column)+row * blen] = MIN(H[(column - 1) + (row - 1) * blen] + score, MIN(H[(column)+(row - 1) * blen] + 1, H[(column - 1) + (row)*blen] + 1));
-
-		}
-	}
-
-	CPUend = clock();										//End time of CPU
-	time_spentCPU = (double)(CPUend - CPUbegin) / CLOCKS_PER_SEC;
-	printf("CPU time = %lf Sec\n", time_spentCPU);
-
-
-	//Here This Block of code is to Print data after finishing code
-
-	//printf("\n____________CPU_______________\n");
-
-	// for(int r = 0 ; r < alen ; r++)   
-	// {
-	//   for(int c = 0 ; c < blen ; c++)
-	//{
-	//	 //printf("Type a number for <line: %d, column: %d>\t", i, j);
-	//	printf("%3d ", H[r *blen +c]);// printf("\n");
-	//}
-	//     printf("\n");
-	// }
-
-
-
-	cudaSetDevice(0);
-
-	//Create memory allocation in GPU
-	cudaMalloc((void**)&dev_H, alen * blen * sizeof(int));
-	cudaMalloc((void**)&dev_a, LENGHT * sizeof(char));
-	cudaMalloc((void**)&dev_b, LENGHT * sizeof(char));
-
-	GPUbegin = clock();
-	//Copy all arrays to GPU memory
-	cudaMemcpy(dev_H, NewH, alen * blen * sizeof(int), cudaMemcpyHostToDevice);
-
-	const int NumberOfThreads = 256;
-	dim3 ThreadsWarp(32, 8);
-	// Here run initionlize in GPU side
-
-	init_rows <<<ThreadsWarp, alen >> > (dev_H, blen);
-	init_columns <<<ThreadsWarp, blen >> > (dev_H, blen);
-
-
-	//cudaMemcpy(H, dev_H,  alen * blen  * sizeof(int), cudaMemcpyDeviceToHost);
-	cudaMemcpy(dev_a, a, LENGHT * sizeof(char), cudaMemcpyHostToDevice);
-	cudaMemcpy(dev_b, b, LENGHT * sizeof(char), cudaMemcpyHostToDevice);
-
-
-	//Set GPU for parallel working
-
-	int size = (int)ceil((float)blen / (float)NumberOfThreads);
-	int Increment = alen - 1;
-	//begain time of GPU
-	int MemSize = alen * blen;
-	for (int slice = 0; slice < 2 * alen - 1; ++slice)
-	{
-		int z = slice < alen ? 0 : slice - alen + 1;//CPU
-		size = (int)ceil((float)((slice - 2 * z) + 1));
-
-		ShihabKernel <<<ThreadsWarp, MemSize >> > (dev_a, dev_b, slice, z, alen, dev_H, Increment, size);
-	}
-
-	cudaMemcpy(NewH, dev_H, alen * blen * sizeof(int), cudaMemcpyDeviceToHost);
-	GPUend = clock();								//End time of GPU
-
-	time_spentGPU = (double)(GPUend - GPUbegin) / CLOCKS_PER_SEC;
-	printf("\nGPU time = %lf Sec\n", time_spentGPU);
-
-	/*cudaMemcpy(a, dev_a,  LENGHT * sizeof(char), cudaMemcpyDeviceToHost);
-	cudaMemcpy(b, dev_b, LENGHT  * sizeof(char), cudaMemcpyDeviceToHost);
-	printf("a = %s\nb = %s\n",a,b);*/
-	cudaFree(dev_a);
-	cudaFree(dev_b);
-	cudaFree(dev_H);
-	cudaDeviceReset();
-
-
-	//---------------------printing the matricies---------------------
-
-
-	// printf("\n____________GPU_______________\n");
-
-	// for(int r = 0 ; r < alen ; r++)   
-	// {
-	//   for(int c = 0 ; c < blen ; c++)
-	//{
-	//	// printf("Type a number for <line: %d, column: %d>\t", i, j);
-	//	printf("%3d ", NewH[r *blen +c]);// printf("\n");
-	//}
-	//     printf("\n");
-	// }
-
-	return (0);
 }
