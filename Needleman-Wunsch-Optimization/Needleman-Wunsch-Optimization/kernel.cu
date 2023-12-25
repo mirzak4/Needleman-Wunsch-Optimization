@@ -13,6 +13,8 @@
 #include <vector>
 #include <iostream>
 #include <random>
+#include <chrono>
+#include <cmath>
 #define max(x,y) ((x) > (y) ? (x) : (y))
 #define min(x,y)  ((x) < (y) ? (x) : (y))
 #define alphabet "ACGT"
@@ -175,10 +177,15 @@ __device__ int device_get_cell_score(char x, char y, int score)
     return x == y ? score : -score;
 }
 
-__global__ void ad_kernel(char* subsequence_1, char* subsequence_2, int* row_current, int* row_d, int* row_hv, int current_row_index, int m, int n, int score, int gap_penalty)
+__global__ void ad_kernel(char* subsequence_1, char* subsequence_2, int* row_current, int* row_d, int* row_hv, int current_ad_size, int current_row_index, int m, int n, int score, int gap_penalty)
 {
     int i = current_row_index;
     int j = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+    if (j >= current_ad_size)
+    {
+        return;
+    }
 
     int original_i = device_get_original_row(n + 1, i, j);
     int original_j = device_get_original_column(n + 1, i, j);
@@ -226,7 +233,20 @@ __global__ void ad_kernel(char* subsequence_1, char* subsequence_2, int* row_cur
     }
 }
 
-std::vector<std::vector<int>> sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
+void initialize_d_hv_rows(int* &row_d_device, int* &row_hv_device)
+{
+    int* row_d_host = (int*)malloc(sizeof(int));
+    row_d_host[0] = 0;
+
+    int* row_hv_host = (int*)malloc(2 * sizeof(int));
+    row_d_host[1] = -2;
+    row_d_host[2] = -2;
+
+    cudaMemcpy(row_d_device, row_d_host, sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(row_hv_device, row_hv_host, 2 * sizeof(int), cudaMemcpyHostToDevice);
+}
+
+int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
 {
     int gap_penalty = -2;
     int score = 1;
@@ -234,13 +254,7 @@ std::vector<std::vector<int>> sequence_alignment_gpu(std::string sequence_1, std
     int m = sequence_1.length();
     int n = sequence_2.length();
 
-    // Refactor this part !!!
-    std::vector<std::vector<int>> score_matrix(m + 1, std::vector<int>(n + 1, 0));
-
-    std::vector<std::vector<int>> ad_rows = split_into_anti_diagonal_rows(score_matrix);
-
     char* sequence_1_device, * sequence_2_device;
-
 
     // Allocate memory and initialize subsequences needed for current ad
     cudaMalloc(&sequence_1_device, sequence_1.length() * sizeof(char));
@@ -249,45 +263,75 @@ std::vector<std::vector<int>> sequence_alignment_gpu(std::string sequence_1, std
     cudaMemcpy(sequence_1_device, sequence_1.c_str(), sequence_1.length() * sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(sequence_2_device, sequence_2.c_str(), sequence_2.length() * sizeof(char), cudaMemcpyHostToDevice);
 
-    for (int i = 0; i < ad_rows.size(); ++i) 
+    int num_of_ad = (m + 1) + (n + 1) - 1;
+    int longest_ad_size = ceil(sqrt(pow(m + 1, 2) + pow(n + 1, 2)));
+
+    int *row_d_device, *row_hv_device, *row_current_device;
+
+    int* row_current_host = (int*)malloc(longest_ad_size * sizeof(int));
+
+    cudaMalloc(&row_d_device, longest_ad_size * sizeof(int));
+    cudaMalloc(&row_hv_device, longest_ad_size * sizeof(int));
+    cudaMalloc(&row_current_device, longest_ad_size * sizeof(int));
+
+    initialize_d_hv_rows(row_d_device, row_hv_device);
+
+    for (int i = 2; i < num_of_ad; i++)
     {
-        std::vector<int>& row_d = (i > 1) ? ad_rows[i - 2] : std::vector<int>(m + 1, 0);
-        std::vector<int>& row_hv = (i > 1) ? ad_rows[i - 1] : std::vector<int>(m + 1, 0);
-        std::vector<int>& row_current = ad_rows[i];
-
-        // Alloate memory and initialize three ad vectors: current, d and hv on GPU
-        int *row_d_device, *row_hv_device, *row_current_device;
-        cudaMalloc(&row_d_device, row_d.size() * sizeof(int) * sizeof(char));
-        cudaMalloc(&row_hv_device, row_hv.size() * sizeof(int) * sizeof(char));
-        cudaMalloc(&row_current_device, row_current.size() * sizeof(int) * sizeof(char));
-
-        cudaMemcpy(row_d_device, &row_d[0], row_d.size() * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(row_hv_device, &row_hv[0], row_hv.size() * sizeof(int), cudaMemcpyHostToDevice);
-        cudaMemcpy(row_current_device, &row_current[0], row_current.size() * sizeof(int), cudaMemcpyHostToDevice);
-
+        int curr_ad_size = min(m + 1 - i, min(n + 1 - i, min(i + 1, n + 1)));
         dim3 grid_size(1);
-        dim3 block_size(row_current.size());
+        dim3 block_size(curr_ad_size);
 
-        for (int j = 0; j < row_current.size(); ++j)
-        {
-            ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, i, m, n, score, gap_penalty);
-        }
+        ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, curr_ad_size, i, m, n, score, gap_penalty);
 
-        cudaMemcpy(&row_current[0], row_current_device, row_current.size() * sizeof(int), cudaMemcpyDeviceToHost);
+        row_d_device = row_hv_device;
+        row_hv_device = row_current_device;
+        cudaMemcpy(&row_current_host, row_current_device, curr_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
     }
 
-    return ad_rows;
+    return row_current_host;
+
+    //for (int i = 0; i < ad_rows.size(); ++i) 
+    //{
+    //    std::vector<int>& row_d = (i > 1) ? ad_rows[i - 2] : std::vector<int>(m + 1, 0);
+    //    std::vector<int>& row_hv = (i > 1) ? ad_rows[i - 1] : std::vector<int>(m + 1, 0);
+    //    std::vector<int>& row_current = ad_rows[i];
+
+    //    // Alloate memory and initialize three ad vectors: current, d and hv on GPU
+    //    int *row_d_device, *row_hv_device, *row_current_device;
+    //    cudaMalloc(&row_d_device, row_d.size() * sizeof(int) * sizeof(char));
+    //    cudaMalloc(&row_hv_device, row_hv.size() * sizeof(int) * sizeof(char));
+    //    cudaMalloc(&row_current_device, row_current.size() * sizeof(int) * sizeof(char));
+
+    //    cudaMemcpy(row_d_device, &row_d[0], row_d.size() * sizeof(int), cudaMemcpyHostToDevice);
+    //    cudaMemcpy(row_hv_device, &row_hv[0], row_hv.size() * sizeof(int), cudaMemcpyHostToDevice);
+    //    cudaMemcpy(row_current_device, &row_current[0], row_current.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+    //    dim3 grid_size(1);
+    //    dim3 block_size(row_current.size());
+
+    //    for (int j = 0; j < row_current.size(); ++j)
+    //    {
+    //        ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, i, m, n, score, gap_penalty);
+    //    }
+
+    //    cudaMemcpy(&row_current[0], row_current_device, row_current.size() * sizeof(int), cudaMemcpyDeviceToHost);
+    //}
+
+    //return ad_rows;
 }
 
 int main(int argc, char* argv[])
 {
-    std::string sequence_1 = generate_sequence(15);
-    std::string sequence_2 = generate_sequence(15);
+    std::string sequence_1 = "GATTACA";
+    std::string sequence_2 = "GTCGACGCA";
 
     std::cout << "Sequence 1: " << sequence_1 << std::endl;
     std::cout << "Sequence 2: " << sequence_2 << std::endl;
 
     // CPU Method
+    //auto start = std::chrono::high_resolution_clock::now();
+
     //std::vector<std::vector<int>> ad_rows = sequence_alignment_cpu(sequence_1, sequence_2);
 
     //for (int i = 0; i < ad_rows.size(); i++)
@@ -300,18 +344,34 @@ int main(int argc, char* argv[])
     //    std::cout << std::endl;
     //}
 
+    //auto finish = std::chrono::high_resolution_clock::now();
+
+    //auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(finish - start);
+
+    //std::cout << "Time in ms (CPU): " << microseconds.count() << std::endl;
+
     // GPU Method
-    std::vector<std::vector<int>> ad_rows = sequence_alignment_gpu(sequence_1, sequence_2);
+    //start = std::chrono::high_resolution_clock::now();
 
-    std::cout << "Score matrix (anti-diagonal order): " << std::endl;
-    for (int i = 0; i < ad_rows.size(); i++)
-    {
-        for (int j = 0; j < ad_rows[i].size(); j++)
-        {
-            std::cout << ad_rows[i][j] << " ";
-        }
+    int* result = sequence_alignment_gpu(sequence_1, sequence_2);
 
-        std::cout << std::endl;
-    }
+    std::cout << "Alignment score: " << result[0] << std::endl;
+
+    //finish = std::chrono::high_resolution_clock::now();
+
+    //microseconds = std::chrono::duration_cast<std::chrono::microseconds>(finish - start);
+
+    //std::cout << "Time in ms (GPU): " << microseconds.count();
+
+    //std::cout << "Score matrix (anti-diagonal order): " << std::endl;
+    //for (int i = 0; i < ad_rows.size(); i++)
+    //{
+    //    for (int j = 0; j < ad_rows[i].size(); j++)
+    //    {
+    //        std::cout << ad_rows[i][j] << " ";
+    //    }
+
+    //    std::cout << std::endl;
+    //}
 
 }
