@@ -187,6 +187,11 @@ __global__ void ad_kernel(char* subsequence_1, char* subsequence_2, int* row_cur
         return;
     }
 
+    if (j == 1)
+    {
+        int x = 6;
+    }
+
     int original_i = device_get_original_row(n + 1, i, j);
     int original_j = device_get_original_column(n + 1, i, j);
 
@@ -239,8 +244,8 @@ void initialize_d_hv_rows(int* &row_d_device, int* &row_hv_device)
     row_d_host[0] = 0;
 
     int* row_hv_host = (int*)malloc(2 * sizeof(int));
-    row_d_host[1] = -2;
-    row_d_host[2] = -2;
+    row_hv_host[0] = -2;
+    row_hv_host[1] = -2;
 
     cudaMemcpy(row_d_device, row_d_host, sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(row_hv_device, row_hv_host, 2 * sizeof(int), cudaMemcpyHostToDevice);
@@ -278,16 +283,31 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
 
     for (int i = 2; i < num_of_ad; i++)
     {
-        int curr_ad_size = min(m + 1 - i, min(n + 1 - i, min(i + 1, n + 1)));
+        int curr_ad_size = i <= (n + 1) ? (min(i, m + 1, n + 1 - i + 1)) + 1 : (min(m + 1, m + 1 + n + 1 - i + 1, i - n - 1)) + 1;
         dim3 grid_size(1);
         dim3 block_size(curr_ad_size);
 
+        //int* row_d_host = (int*)malloc(longest_ad_size * sizeof(int));
+        //cudaMemcpy(row_d_host, row_d_device, longest_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
         ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, curr_ad_size, i, m, n, score, gap_penalty);
 
+        
+        //int* row_hv_host = (int*)malloc(longest_ad_size * sizeof(int));
+        cudaMemcpy(row_current_host, row_current_device, curr_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
+        
+        //cudaMemcpy(row_hv_host, row_hv_device, longest_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
+       
+        int* old_row_d_device = row_d_device;
         row_d_device = row_hv_device;
         row_hv_device = row_current_device;
-        cudaMemcpy(&row_current_host, row_current_device, curr_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
+        row_current_device = old_row_d_device;
     }
+
+    //cudaFree(sequence_1_device);
+    //cudaFree(sequence_2_device);
+    //cudaFree(row_d_device);
+    //cudaFree(row_hv_device);
+    //cudaFree(row_current_device);
 
     return row_current_host;
 
@@ -323,8 +343,8 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
 
 int main(int argc, char* argv[])
 {
-    std::string sequence_1 = "GATTACA";
-    std::string sequence_2 = "GTCGACGCA";
+    std::string sequence_1 = generate_sequence(14);
+    std::string sequence_2 = generate_sequence(19);
 
     std::cout << "Sequence 1: " << sequence_1 << std::endl;
     std::cout << "Sequence 2: " << sequence_2 << std::endl;
