@@ -287,15 +287,9 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
         dim3 grid_size(1);
         dim3 block_size(curr_ad_size);
 
-        //int* row_d_host = (int*)malloc(longest_ad_size * sizeof(int));
-        //cudaMemcpy(row_d_host, row_d_device, longest_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
         ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, curr_ad_size, i, m, n, score, gap_penalty);
-
         
-        //int* row_hv_host = (int*)malloc(longest_ad_size * sizeof(int));
         cudaMemcpy(row_current_host, row_current_device, curr_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
-        
-        //cudaMemcpy(row_hv_host, row_hv_device, longest_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
        
         int* old_row_d_device = row_d_device;
         row_d_device = row_hv_device;
@@ -310,35 +304,6 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
     //cudaFree(row_current_device);
 
     return row_current_host;
-
-    //for (int i = 0; i < ad_rows.size(); ++i) 
-    //{
-    //    std::vector<int>& row_d = (i > 1) ? ad_rows[i - 2] : std::vector<int>(m + 1, 0);
-    //    std::vector<int>& row_hv = (i > 1) ? ad_rows[i - 1] : std::vector<int>(m + 1, 0);
-    //    std::vector<int>& row_current = ad_rows[i];
-
-    //    // Alloate memory and initialize three ad vectors: current, d and hv on GPU
-    //    int *row_d_device, *row_hv_device, *row_current_device;
-    //    cudaMalloc(&row_d_device, row_d.size() * sizeof(int) * sizeof(char));
-    //    cudaMalloc(&row_hv_device, row_hv.size() * sizeof(int) * sizeof(char));
-    //    cudaMalloc(&row_current_device, row_current.size() * sizeof(int) * sizeof(char));
-
-    //    cudaMemcpy(row_d_device, &row_d[0], row_d.size() * sizeof(int), cudaMemcpyHostToDevice);
-    //    cudaMemcpy(row_hv_device, &row_hv[0], row_hv.size() * sizeof(int), cudaMemcpyHostToDevice);
-    //    cudaMemcpy(row_current_device, &row_current[0], row_current.size() * sizeof(int), cudaMemcpyHostToDevice);
-
-    //    dim3 grid_size(1);
-    //    dim3 block_size(row_current.size());
-
-    //    for (int j = 0; j < row_current.size(); ++j)
-    //    {
-    //        ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, i, m, n, score, gap_penalty);
-    //    }
-
-    //    cudaMemcpy(&row_current[0], row_current_device, row_current.size() * sizeof(int), cudaMemcpyDeviceToHost);
-    //}
-
-    //return ad_rows;
 }
 
 int main(int argc, char* argv[])
