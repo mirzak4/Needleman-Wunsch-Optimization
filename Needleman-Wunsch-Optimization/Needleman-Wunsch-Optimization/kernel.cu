@@ -343,14 +343,14 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
 
 int main(int argc, char* argv[])
 {
-    std::string sequence_1 = generate_sequence(14);
-    std::string sequence_2 = generate_sequence(19);
+    std::string sequence_1 = generate_sequence(200000);
+    std::string sequence_2 = generate_sequence(200000);
 
-    std::cout << "Sequence 1: " << sequence_1 << std::endl;
-    std::cout << "Sequence 2: " << sequence_2 << std::endl;
+    //std::cout << "Sequence 1: " << sequence_1 << std::endl;
+    //std::cout << "Sequence 2: " << sequence_2 << std::endl;
 
     // CPU Method
-    //auto start = std::chrono::high_resolution_clock::now();
+    //auto start_cpu = std::chrono::high_resolution_clock::now();
 
     //std::vector<std::vector<int>> ad_rows = sequence_alignment_cpu(sequence_1, sequence_2);
 
@@ -364,24 +364,26 @@ int main(int argc, char* argv[])
     //    std::cout << std::endl;
     //}
 
-    //auto finish = std::chrono::high_resolution_clock::now();
+    //auto finish_cpu = std::chrono::high_resolution_clock::now();
 
-    //auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(finish - start);
+    //auto microseconds_cpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_cpu - start_cpu);
 
-    //std::cout << "Time in ms (CPU): " << microseconds.count() << std::endl;
+    //std::cout << "Time in ms (CPU): " << microseconds_cpu.count() << std::endl;
 
     // GPU Method
-    //start = std::chrono::high_resolution_clock::now();
+    auto start_gpu = std::chrono::high_resolution_clock::now();
 
-    int* result = sequence_alignment_gpu(sequence_1, sequence_2);
+    int* result_gpu = sequence_alignment_gpu(sequence_1, sequence_2);
 
-    std::cout << "Alignment score: " << result[0] << std::endl;
+    //std::cout << "Alignment score: " << result_gpu[0] << std::endl;
 
-    //finish = std::chrono::high_resolution_clock::now();
+    auto finish_gpu = std::chrono::high_resolution_clock::now();
 
-    //microseconds = std::chrono::duration_cast<std::chrono::microseconds>(finish - start);
+    auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
 
-    //std::cout << "Time in ms (GPU): " << microseconds.count();
+    std::cout << "Time in ms (GPU): " << microseconds_gpu.count() << std::endl;
+
+    //std::cout << "Ratio: " << microseconds_cpu.count() / microseconds_gpu.count();
 
     //std::cout << "Score matrix (anti-diagonal order): " << std::endl;
     //for (int i = 0; i < ad_rows.size(); i++)
