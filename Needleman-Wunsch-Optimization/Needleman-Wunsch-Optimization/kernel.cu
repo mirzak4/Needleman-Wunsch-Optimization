@@ -154,8 +154,10 @@ int** sequence_alignment_cpu(const std::string& sequence_1, const std::string& s
                     row_current[j] = i * gap_penalty;
                 }
                 else {
-                    int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
-                    row_current[j] = max(row_d[j - 1] + cell_score, max(row_hv[j - 1] + gap_penalty, row_hv[j] + gap_penalty));
+                    if (original_i - 1 >= 0 && original_i - 1 < sequence_1.length() && original_j - 1 >= 0 && original_j - 1 < sequence_2.length()) {
+                        int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
+                        row_current[j] = max(row_d[j - 1] + cell_score, max(row_hv[j - 1] + gap_penalty, row_hv[j] + gap_penalty));
+                    }
                 }
             }
             // Mid
@@ -165,8 +167,10 @@ int** sequence_alignment_cpu(const std::string& sequence_1, const std::string& s
                     row_current[j] = i * gap_penalty;
                 }
                 else {
-                    int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
-                    row_current[j] = max(row_d[j] + cell_score, max(row_hv[j] + gap_penalty, row_hv[j + 1] + gap_penalty));
+                    if (original_i - 1 >= 0 && original_i - 1 < sequence_1.length() && original_j - 1 >= 0 && original_j - 1 < sequence_2.length()) {
+                        int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
+                        row_current[j] = max(row_d[j] + cell_score, max(row_hv[j] + gap_penalty, row_hv[j + 1] + gap_penalty));
+                    }
                 }
             }
             // Latter
@@ -176,8 +180,10 @@ int** sequence_alignment_cpu(const std::string& sequence_1, const std::string& s
                     row_current[j] = i * gap_penalty;
                 }
                 else {
-                    int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
-                    row_current[j] = max(row_d[j + 1] + cell_score, max(row_hv[j] + gap_penalty, row_hv[j + 1] + gap_penalty));
+                    if (original_i - 1 >= 0 && original_i - 1 < sequence_1.length() && original_j - 1 >= 0 && original_j - 1 < sequence_2.length()) {
+                        int cell_score = get_cell_score(sequence_1[original_i - 1], sequence_2[original_j - 1], score);
+                        row_current[j] = max(row_d[j + 1] + cell_score, max(row_hv[j] + gap_penalty, row_hv[j + 1] + gap_penalty));
+                    }
                 }
             }
         }
@@ -344,8 +350,8 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
 
 int main(int argc, char* argv[])
 {
-    std::string sequence_1 = generate_sequence(5);
-    std::string sequence_2 = generate_sequence(5);
+    std::string sequence_1 = generate_sequence(20000);
+    std::string sequence_2 = generate_sequence(20000);
 
     //std::cout << "Sequence 1: " << sequence_1 << std::endl;
     //std::cout << "Sequence 2: " << sequence_2 << std::endl;
@@ -371,7 +377,7 @@ int main(int argc, char* argv[])
 
     auto microseconds_cpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_cpu - start_cpu);
 
-    std::cout << "Time in ms (CPU): " << microseconds_cpu.count() << std::endl;
+    std::cout << "Time in us (CPU): " << microseconds_cpu.count() << std::endl;
 
     // oslobađanje memorije
     for (int i = 0; i < num_ad_rows; i++) {
