@@ -53,37 +53,57 @@ int get_cell_score(char x, char y, int score)
     return x == y ? score : -score;
 }
 
-std::vector<std::vector<int>> split_into_anti_diagonal_rows(const std::vector<std::vector<int>>& matrix) {
-    int m = matrix.size();
-    int n = matrix[0].size();
-    std::vector<std::vector<int>> anti_diagonals;
+int** alokacija_matrice(int rows, int cols) {
+    int** matrica = new int* [rows];
+    for (int i = 0; i < rows; i++) {
+        matrica[i] = new int[cols];
+    }
+    return matrica;
+}
+
+void dealokacija_matrice(int** matrica, int rows) {
+    for (int i = 0; i < rows; i++) {
+        delete[] matrica[i];
+    }
+    delete[] matrica;
+}
+
+int** split_into_anti_diagonal_rows(int** matrix, int m, int n, int& num_anti_diagonals) {
 
     // Create a flipped matrix
-    std::vector<std::vector<int>> flipped_matrix(m, std::vector<int>(n, 0));
-    for (int i = 0; i < m; ++i) {
-        for (int j = 0; j < n; ++j) {
+    int** flipped_matrix = alokacija_matrice(m, n);
+
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
             flipped_matrix[i][j] = matrix[i][n - 1 - j];
         }
     }
 
-    for (int d = 0; d < m + n - 1; ++d) {
-        int offset = n - 1 - d;
-        std::vector<int> anti_diagonal;
+    num_anti_diagonals = m + n - 1;
+    int** anti_diagonals = alokacija_matrice(num_anti_diagonals, max(m, n));
 
-        for (int i = 0; i < m; ++i) {
+    for (int d = 0; d < m + n - 1; d++) {
+        int offset = n - 1 - d;
+        int k = 0;
+
+        for (int i = 0; i < m; i++) {
             int j = i + offset;
             if (j >= 0 && j < n) {
-                anti_diagonal.push_back(flipped_matrix[i][j]);
+                anti_diagonals[d][k++] = flipped_matrix[i][j];
             }
         }
 
-        anti_diagonals.push_back(anti_diagonal);
+        for (int l = k; l < max(m, n); l++) {
+            anti_diagonals[d][l] = -1;
+        }
     }
+
+    dealokacija_matrice(flipped_matrix, m);
 
     return anti_diagonals;
 }
 
-std::vector<std::vector<int>> sequence_alignment_cpu(std::string sequence_1, std::string sequence_2)
+int** sequence_alignment_cpu(const std::string& sequence_1, const std::string& sequence_2, int& num_ad_rows)
 {
     int gap_penalty = -2;
     int score = 1;
@@ -91,18 +111,38 @@ std::vector<std::vector<int>> sequence_alignment_cpu(std::string sequence_1, std
     int m = sequence_1.length();
     int n = sequence_2.length();
 
-    std::vector<std::vector<int>> score_matrix(m + 1, std::vector<int>(n + 1, 0));
+    int** score_matrix = alokacija_matrice(m + 1, n + 1);
 
-    std::vector<std::vector<int>> ad_rows = split_into_anti_diagonal_rows(score_matrix);
+    for (int i = 0; i < m + 1; i++) {
+        for (int j = 0; j < n + 1; j++) {
+            score_matrix[i][j] = 0;
+        }
+    }
 
-    for (int i = 0; i < ad_rows.size(); ++i) {
+    int** ad_rows = split_into_anti_diagonal_rows(score_matrix, m + 1, n + 1, num_ad_rows);
+
+    dealokacija_matrice(score_matrix, m + 1);
+
+    for (int i = 0; i < num_ad_rows; i++) {
+
         // In every iteration, initialize two other anti-diagonals needed for calculation of the current anti-diagonal
-        std::vector<int>& row_d = (i > 1) ? ad_rows[i - 2] : std::vector<int>(m + 1, 0);
-        std::vector<int>& row_hv = (i > 1) ? ad_rows[i - 1] : std::vector<int>(m + 1, 0);
-        std::vector<int>& row_current = ad_rows[i];
+        int* row_d = (i > 1) ? ad_rows[i - 2] : nullptr;
+        int* row_hv = (i > 1) ? ad_rows[i - 1] : nullptr;
+        int* row_current = ad_rows[i];
+
+        int row_current_size;
+        if (i < n + 1) {
+            row_current_size = i + 1;
+        }
+        else if (i < m + n + 1) {
+            row_current_size = min(m + 1, n + 1);
+        }
+        else {
+            row_current_size = m + n + 1 - i;
+        }
 
         // Iterate through elements of the current ad
-        for (int j = 0; j < row_current.size(); ++j) {
+        for (int j = 0; j < row_current_size; j++) {
             // To calculate the current cell's score, obtain the original position of that element inside the matrix
             int original_i = get_original_row(n + 1, i, j);
             int original_j = get_original_column(n + 1, i, j);
@@ -282,6 +322,7 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
         dim3 grid_size(1);
         dim3 block_size(curr_ad_size);
 
+        // radi iako se crveni
         ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, curr_ad_size, i, m, n, score, gap_penalty);
         
         cudaMemcpy(row_current_host, row_current_device, curr_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
@@ -303,48 +344,50 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
 
 int main(int argc, char* argv[])
 {
-    std::string sequence_1 = generate_sequence(200000);
-    std::string sequence_2 = generate_sequence(200000);
+    std::string sequence_1 = generate_sequence(5);
+    std::string sequence_2 = generate_sequence(5);
 
     //std::cout << "Sequence 1: " << sequence_1 << std::endl;
     //std::cout << "Sequence 2: " << sequence_2 << std::endl;
 
     // CPU Method
-    //auto start_cpu = std::chrono::high_resolution_clock::now();
+    auto start_cpu = std::chrono::high_resolution_clock::now();
 
-    //std::vector<std::vector<int>> ad_rows = sequence_alignment_cpu(sequence_1, sequence_2);
+    int num_ad_rows;
+    int** ad_rows = sequence_alignment_cpu(sequence_1, sequence_2, num_ad_rows);
 
-    //for (int i = 0; i < ad_rows.size(); i++)
-    //{
-    //    for (int j = 0; j < ad_rows[i].size(); j++)
-    //    {
-    //        std::cout << ad_rows[i][j] << " ";
-    //    }
-    //    
-    //    std::cout << std::endl;
-    //}
+    /*
+    for (int i = 0; i < num_ad_rows; i++)
+    {
+        int j = 0;
+        while (ad_rows[i][j] != -1) {
+            std::cout << ad_rows[i][j] << " ";
+            j++;
+        }
+        std::cout << std::endl;
+    }
+    */
+    auto finish_cpu = std::chrono::high_resolution_clock::now();
 
-    //auto finish_cpu = std::chrono::high_resolution_clock::now();
+    auto microseconds_cpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_cpu - start_cpu);
 
-    //auto microseconds_cpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_cpu - start_cpu);
+    std::cout << "Time in ms (CPU): " << microseconds_cpu.count() << std::endl;
 
-    //std::cout << "Time in ms (CPU): " << microseconds_cpu.count() << std::endl;
+    // oslobađanje memorije
+    for (int i = 0; i < num_ad_rows; i++) {
+        delete[] ad_rows[i];
+    }
+    delete[] ad_rows;
+
 
     // GPU Method
-    auto start_gpu = std::chrono::high_resolution_clock::now();
-
-    int* result_gpu = sequence_alignment_gpu(sequence_1, sequence_2);
-
+    //auto start_gpu = std::chrono::high_resolution_clock::now();
+    //int* result_gpu = sequence_alignment_gpu(sequence_1, sequence_2);
     //std::cout << "Alignment score: " << result_gpu[0] << std::endl;
-
-    auto finish_gpu = std::chrono::high_resolution_clock::now();
-
-    auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
-
-    std::cout << "Time in ms (GPU): " << microseconds_gpu.count() << std::endl;
-
+    //auto finish_gpu = std::chrono::high_resolution_clock::now();
+    //auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
+    //std::cout << "Time in ms (GPU): " << microseconds_gpu.count() << std::endl;
     //std::cout << "Ratio: " << microseconds_cpu.count() / microseconds_gpu.count();
-
     //std::cout << "Score matrix (anti-diagonal order): " << std::endl;
     //for (int i = 0; i < ad_rows.size(); i++)
     //{
