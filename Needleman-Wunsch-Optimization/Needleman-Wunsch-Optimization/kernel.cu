@@ -1,10 +1,5 @@
 ﻿/************************************************************************************************
-*						This code is written by Mohammed Ali Alawi Shehab
-*						Publication name :Speed Up Needleman-Wunsch Global Alignment Algorithm Using GPU Technique
-*						URL				: https://www.researchgate.net/publication/292977570_Speed_Up_Needleman-Wunsch_Global_Alignment_Algorithm_Using_GPU_Technique#feedback/198672
-*						Authors			:  Maged Fakirah,  Mohammed A. Shehab,  Yaser Jararweh and Mahmoud Al-Ayyoub
-*						INSTITUTION		: Jordan University of Science and Technology, Irbid, Jordan
-*						DEPARTMENT		: Department of Computer Science
+*						CPU IMPLEMENTACIJA
 *************************************************************************************************/
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
