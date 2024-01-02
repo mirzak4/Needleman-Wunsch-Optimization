@@ -31,7 +31,7 @@ char get_char()
     return alphabet[rand_index];
 }
 
-std::string generate_sequence(int size)
+const char* generate_sequence(int size)
 {
     std::string result = "";
     for (int i = 0; i < size; i++)
@@ -39,7 +39,7 @@ std::string generate_sequence(int size)
         result.push_back(get_char());
     }
 
-    return result;
+    return result.c_str();
 }
 
 // CPU AD Methods
@@ -246,22 +246,19 @@ void initialize_d_hv_rows(int* &row_d_device, int* &row_hv_device)
     cudaMemcpy(row_hv_device, row_hv_host, 2 * sizeof(int), cudaMemcpyHostToDevice);
 }
 
-int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
+int* sequence_alignment_gpu(char* sequence_1, char* sequence_2, int m, int n)
 {
     int gap_penalty = -2;
     int score = 1;
 
-    int m = sequence_1.length();
-    int n = sequence_2.length();
-
     char* sequence_1_device, * sequence_2_device;
 
     // Allocate memory and initialize subsequences needed for current ad
-    cudaMalloc(&sequence_1_device, sequence_1.length() * sizeof(char));
-    cudaMalloc(&sequence_2_device, sequence_2.length() * sizeof(char));
+    cudaMalloc(&sequence_1_device, m * sizeof(char));
+    cudaMalloc(&sequence_2_device, n * sizeof(char));
 
-    cudaMemcpy(sequence_1_device, sequence_1.c_str(), sequence_1.length() * sizeof(char), cudaMemcpyHostToDevice);
-    cudaMemcpy(sequence_2_device, sequence_2.c_str(), sequence_2.length() * sizeof(char), cudaMemcpyHostToDevice);
+    cudaMemcpy(sequence_1_device, sequence_1, m * sizeof(char), cudaMemcpyHostToDevice);
+    cudaMemcpy(sequence_2_device, sequence_2, n * sizeof(char), cudaMemcpyHostToDevice);
 
     int num_of_ad = (m + 1) + (n + 1) - 1;
     int longest_ad_size = ceil(sqrt(pow(m + 1, 2) + pow(n + 1, 2)));
@@ -303,8 +300,8 @@ int* sequence_alignment_gpu(std::string sequence_1, std::string sequence_2)
 
 int main(int argc, char* argv[])
 {
-    std::string sequence_1 = generate_sequence(200000);
-    std::string sequence_2 = generate_sequence(200000);
+    char* sequence_1 = const_cast<char*>(generate_sequence(200000));
+    char* sequence_2 = const_cast<char*>(generate_sequence(200000));
 
     //std::cout << "Sequence 1: " << sequence_1 << std::endl;
     //std::cout << "Sequence 2: " << sequence_2 << std::endl;
@@ -333,7 +330,7 @@ int main(int argc, char* argv[])
     // GPU Method
     auto start_gpu = std::chrono::high_resolution_clock::now();
 
-    int* result_gpu = sequence_alignment_gpu(sequence_1, sequence_2);
+    int* result_gpu = sequence_alignment_gpu(sequence_1, sequence_2, 200000, 200000);
 
     //std::cout << "Alignment score: " << result_gpu[0] << std::endl;
 
