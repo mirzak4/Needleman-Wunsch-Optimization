@@ -187,11 +187,6 @@ __global__ void ad_kernel(char* subsequence_1, char* subsequence_2, int* row_cur
         return;
     }
 
-    if (j == 1)
-    {
-        int x = 6;
-    }
-
     int original_i = device_get_original_row(n + 1, i, j);
     int original_j = device_get_original_column(n + 1, i, j);
 
