@@ -25,21 +25,33 @@ char get_char()
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    // Define a uniform distribution in the range [0, RAND_MAX]
+    // Define a uniform distribution in the range [0, 3]
     std::uniform_int_distribution<int> distribution(0, 3);
+
     int rand_index = distribution(gen);
     return alphabet[rand_index];
 }
 
-const char* generate_sequence(int size)
+//const char* generate_sequence(int size)
+//{
+//    std::string result = "";
+//    for (int i = 0; i < size; i++)
+//    {
+//        result.push_back(get_char());
+//    }
+//
+//    return result.c_str();
+//}
+
+void generate_sequence(int size, char* &a)
 {
-    std::string result = "";
-    for (int i = 0; i < size; i++)
+    int i = 0;
+    for (i = 0; i < size; i++)
     {
-        result.push_back(get_char());
+        a[i] = get_char();
     }
 
-    return result.c_str();
+    a[i] = '\0';
 }
 
 // CPU AD Methods
@@ -246,10 +258,13 @@ void initialize_d_hv_rows(int* &row_d_device, int* &row_hv_device)
     cudaMemcpy(row_hv_device, row_hv_host, 2 * sizeof(int), cudaMemcpyHostToDevice);
 }
 
-int* sequence_alignment_gpu(char* sequence_1, char* sequence_2, int m, int n)
+int* sequence_alignment_gpu(const char* sequence_1, const char* sequence_2, int m, int n)
 {
     int gap_penalty = -2;
     int score = 1;
+
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, 0);
 
     char* sequence_1_device, * sequence_2_device;
 
@@ -276,8 +291,15 @@ int* sequence_alignment_gpu(char* sequence_1, char* sequence_2, int m, int n)
     for (int i = 2; i < num_of_ad; i++)
     {
         int curr_ad_size = i <= (n + 1) ? (min(i, m + 1, n + 1 - i + 1)) + 1 : (min(m + 1, m + 1 + n + 1 - i + 1, i - n - 1)) + 1;
+        
+        // Multiple sequence alignment on multiple blocks?
         dim3 grid_size(1);
         dim3 block_size(curr_ad_size);
+
+        if (curr_ad_size > deviceProp.maxThreadsDim[0]) {
+            grid_size = ceil(curr_ad_size / deviceProp.maxThreadsDim[0]);
+            block_size = deviceProp.maxThreadsDim[0];
+        }
 
         ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, curr_ad_size, i, m, n, score, gap_penalty);
         
@@ -300,8 +322,12 @@ int* sequence_alignment_gpu(char* sequence_1, char* sequence_2, int m, int n)
 
 int main(int argc, char* argv[])
 {
-    char* sequence_1 = const_cast<char*>(generate_sequence(200000));
-    char* sequence_2 = const_cast<char*>(generate_sequence(200000));
+    int size_1 = 10, size_2 = 10;
+    char* sequence_1 = (char*)malloc((size_1 + 1) * sizeof(char));
+    char* sequence_2 = (char*)malloc((size_2 + 1) * sizeof(char));
+
+    generate_sequence(size_1, sequence_1);
+    generate_sequence(size_2, sequence_2);
 
     //std::cout << "Sequence 1: " << sequence_1 << std::endl;
     //std::cout << "Sequence 2: " << sequence_2 << std::endl;
@@ -330,15 +356,15 @@ int main(int argc, char* argv[])
     // GPU Method
     auto start_gpu = std::chrono::high_resolution_clock::now();
 
-    int* result_gpu = sequence_alignment_gpu(sequence_1, sequence_2, 200000, 200000);
+    int* result_gpu = sequence_alignment_gpu(sequence_1, sequence_2, size_1, size_2);
 
-    //std::cout << "Alignment score: " << result_gpu[0] << std::endl;
+    std::cout << "alignment score: " << result_gpu[0] << std::endl;
 
     auto finish_gpu = std::chrono::high_resolution_clock::now();
 
     auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
 
-    std::cout << "Time in ms (GPU): " << microseconds_gpu.count() << std::endl;
+    std::cout << "time in ms (gpu): " << microseconds_gpu.count() << std::endl;
 
     //std::cout << "Ratio: " << microseconds_cpu.count() / microseconds_gpu.count();
 
