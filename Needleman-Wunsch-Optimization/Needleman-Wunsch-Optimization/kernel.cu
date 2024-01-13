@@ -303,6 +303,8 @@ int* sequence_alignment_gpu(const char* sequence_1, const char* sequence_2, int 
 
         ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, curr_ad_size, i, m, n, score, gap_penalty);
         
+        cudaDeviceSynchronize();
+        
         cudaMemcpy(row_current_host, row_current_device, curr_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
        
         int* old_row_d_device = row_d_device;
@@ -322,7 +324,7 @@ int* sequence_alignment_gpu(const char* sequence_1, const char* sequence_2, int 
 
 int main(int argc, char* argv[])
 {
-    int size_1 = 10, size_2 = 10;
+    int size_1 = 200000, size_2 = 200000;
     char* sequence_1 = (char*)malloc((size_1 + 1) * sizeof(char));
     char* sequence_2 = (char*)malloc((size_2 + 1) * sizeof(char));
 
@@ -358,7 +360,7 @@ int main(int argc, char* argv[])
 
     int* result_gpu = sequence_alignment_gpu(sequence_1, sequence_2, size_1, size_2);
 
-    std::cout << "alignment score: " << result_gpu[0] << std::endl;
+    //std::cout << "alignment score: " << result_gpu[0] << std::endl;
 
     auto finish_gpu = std::chrono::high_resolution_clock::now();
 
@@ -378,5 +380,15 @@ int main(int argc, char* argv[])
 
     //    std::cout << std::endl;
     //}
+
+/*    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, 0);*/  // Assuming device 0, change if needed
+
+    // Print maximum grid and block sizes
+    //std::cout << "Max Grid Size: " << deviceProp.maxGridSize[0] << " x "
+    //    << deviceProp.maxGridSize[1] << " x " << deviceProp.maxGridSize[2] << std::endl;
+    //std::cout << "Max Block Size: " << deviceProp.maxThreadsDim[0] << " x "
+    //    << deviceProp.maxThreadsDim[1] << " x " << deviceProp.maxThreadsDim[2] << std::endl;
+    //std::cout << "Total Global Memory: " << deviceProp.totalGlobalMem << std::endl;
 
 }
