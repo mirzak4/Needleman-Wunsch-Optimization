@@ -374,7 +374,7 @@ void initialize_multiple_d_hv_rows(int** rows_d_device, int** rows_hv_device, in
     }
 }
 
-__global__ void multiple_ad_kernel(char** sequences, int dim1, int dim2, int blocks_per_sequence, int** rows_d, int** rows_hv, int** rows_current, int current_ad_size, int current_row_index, int score, int gap_penalty)
+__global__ void multiple_ad_kernel(char** sequences, int dim2, int blocks_per_sequence, int** rows_d, int** rows_hv, int** rows_current, int current_ad_size, int current_row_index, int score, int gap_penalty)
 {
     int i = current_row_index;
 
@@ -444,12 +444,8 @@ __global__ void multiple_ad_kernel(char** sequences, int dim1, int dim2, int blo
     }
 }
 
-// Limit sequence number up to 10 sequences
-int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int n_of_sequences)
+int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int n_of_sequences, int score, int gap_penalty)
 {
-    int score = 1;
-    int gap_penalty = -2;
-
     cudaDeviceProp deviceProp;
     cudaGetDeviceProperties(&deviceProp, 0);
 
@@ -461,9 +457,10 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
     for (int i = 0; i < n_of_sequences; i++)
     {
         char* sequence_device;
+        int size = i == 0 ? dim1 : dim2;
 
-        cudaMalloc(&sequence_device, (dim2 + 1) * sizeof(char));
-        cudaMemcpy(sequence_device, sequences[i], (dim2 + 1) * sizeof(char), cudaMemcpyHostToDevice);
+        cudaMalloc(&sequence_device, (size + 1) * sizeof(char));
+        cudaMemcpy(sequence_device, sequences[i], (size + 1) * sizeof(char), cudaMemcpyHostToDevice);
 
         sequences_host[i] = sequence_device;
     }
@@ -525,43 +522,17 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
     for (int i = 2; i < num_of_ad; i++)
     {
         int curr_ad_size = i <= (n + 1) ? (min(i, m + 1, n + 1 - i + 1)) + 1 : (min(m + 1, m + 1 + n + 1 - i + 1, i - n - 1)) + 1;
-        curr_ad_size = min(m, min(n, max(0, m + n - i - 1)));
 
-        if ((m + 1) < (n + 1))
+        int min_m_n = min(m + 1, n + 1);
+        int max_m_n = max(m + 1, n + 1);
+
+        if (i < min_m_n) 
         {
-            if (i < (n + 1))
-            {
-                if (i < (m + 1))
-                {
-                    curr_ad_size = i + 1;
-                }
-                else
-                {
-                    curr_ad_size = m + 1;
-                }
-            }
-            else
-            {
-                curr_ad_size = (m + 1) - (i - n - 1) - 1;
-            }
+            curr_ad_size = i + 1;
         }
-        else
+        else 
         {
-            if (i < (m + 1))
-            {
-                if (i < (n + 1))
-                {
-                    curr_ad_size = i + 1;
-                }
-                else
-                {
-                    curr_ad_size = n + 1;
-                }
-            }
-            else
-            {
-                curr_ad_size = (n + 1) - (i - m - 1) - 1;
-            }
+            curr_ad_size = max(min_m_n, i - min_m_n + 1);
         }
 
         // Multiple sequence alignment on multiple blocks?
@@ -575,7 +546,7 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
 
         dim3 grid_size(blocks_per_sequence * (n_of_sequences - 1));
 
-        multiple_ad_kernel << < grid_size, block_size >> > (sequences_device, dim1, dim2, blocks_per_sequence, rows_d_device, rows_hv_device, rows_current_device, curr_ad_size, i, score, gap_penalty);
+        multiple_ad_kernel << < grid_size, block_size >> > (sequences_device, dim2, blocks_per_sequence, rows_d_device, rows_hv_device, rows_current_device, curr_ad_size, i, score, gap_penalty);
         cudaDeviceSynchronize();
 
         
@@ -593,15 +564,18 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
             cudaMemcpy(rows_current_host[i], rows_current_device_to_host[i], curr_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
 
             int* old_row_d_device = rows_d_device_to_host[i];
-            if (i + 1 == 2) 
-            {
-                std::cout << "Sequence no " << (i + 1) << "(" << sequences[i + 1] << ")" << std::endl;
-                for (int l = 0; l < curr_ad_size; l++)
-                {
-                    std::cout << rows_current_host[i][l] << " ";
-                }
-            }
-            std::cout << std::endl;
+
+            //if (i == 0) 
+            //{
+            //    std::cout << "Sequence no " << (i + 1) << "(" << sequences[i + 1] << ")" << std::endl;
+            //    for (int l = 0; l < curr_ad_size; l++)
+            //    {
+            //        std::cout << rows_current_host[i][l] << " ";
+            //    }
+            //    std::cout << std::endl;
+            //}
+            
+
             rows_d_device_to_host[i] = rows_hv_device_to_host[i];
             rows_hv_device_to_host[i] = rows_current_device_to_host[i];
             rows_current_device_to_host[i] = old_row_d_device;
@@ -619,26 +593,31 @@ int main(int argc, char* argv[])
 {
     char** sequences = (char**)malloc(4 * sizeof(char*));
 
-    int size_1 = 8, size_2 = 7;
+    int size_1 = 16, size_2 = 16;
     char* sequence = (char*)malloc((size_1 + 1) * sizeof(char));
 
     generate_sequence(size_1, sequence);
     sequences[0] = sequence;
     std::cout << sequence << std::endl;
 
-    //for (int i = 1; i < 4; i++)
-    //{
-    //    char* c_sequence_i = (char*)malloc((size_2 + 1) * sizeof(char));
-    //    generate_sequence(size_2, c_sequence_i);
-    //    std::cout << c_sequence_i << std::endl;
-    //    sequences[i] = c_sequence_i;
-    //}
-    sequences[0] = "AAAGACGT";
-    sequences[1] = "CAAGCAG";
-    sequences[2] = "TCACCTT";
-    sequences[3] = "TCATATT";
+    for (int i = 1; i < 4; i++)
+    {
+        char* c_sequence_i = (char*)malloc((size_2 + 1) * sizeof(char));
+        generate_sequence(size_2, c_sequence_i);
+        std::cout << c_sequence_i << std::endl;
+        sequences[i] = c_sequence_i;
+    }
+    //sequences[0] = "TGACACCCATGTTAGTCG";
+    //sequences[1] = "TGCGGGAATAATGG";
+    //sequences[2] = "AGGTGAACTAGGAG";
+    //sequences[3] = "AGGTTCGCCAGTGC";
 
-    int** results = multiple_sequence_alignment_gpu(sequences, size_1, size_2, 4);
+    int** results = multiple_sequence_alignment_gpu(sequences, size_1, size_2, 4, 1, -2);
+
+    for (int i = 0; i < 3; i++)
+    {
+        std::cout << results[i][0] << std::endl;
+    }
 
     //int* result = sequence_alignment_gpu(sequences[0], sequences[2], size_1, size_2);
 
