@@ -368,9 +368,6 @@ __global__ void multiple_ad_kernel(char** sequences, int dim2, int blocks_per_se
         else
         {
             int cell_score = device_get_cell_score(subsequence_1[original_i - 1], subsequence_2[original_j - 1], score);
-            int s1 = row_d[j - 1];
-            int s2 = row_hv[j - 1];
-            int s3 = row_hv[j];
             row_current[j] = device_max(row_d[j - 1] + cell_score, device_max(row_hv[j - 1] + gap_penalty, row_hv[j] + gap_penalty));
         }
     }
@@ -414,6 +411,15 @@ __global__ void rearrange_diagonals(int** rows_d_device, int** rows_hv_device, i
     rows_current_device[i] = old_row_d_device;
 }
 
+void rearrange_diagonals_cpu(int** rows_d_host_to_device, int** rows_hv_host_to_device, int** rows_current_host_to_device, int i)
+{
+    int* old_row_d_device = rows_d_host_to_device[i];
+
+    rows_d_host_to_device[i] = rows_hv_host_to_device[i];
+    rows_hv_host_to_device[i] = rows_current_host_to_device[i];
+    rows_current_host_to_device[i] = old_row_d_device;
+}
+
 int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int n_of_sequences, int score, int gap_penalty)
 {
     cudaDeviceProp deviceProp;
@@ -445,7 +451,7 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
     int** rows_current_host = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
     for (int i = 0; i < n_of_sequences - 1; i++)
     {
-        rows_current_host[i] = (int*)malloc(longest_ad_size * sizeof(int));
+        rows_current_host[i] = (int*)malloc(sizeof(int));
     }
 
     // Initialize array of 3-tuples representing d_row, h_row and current_row for every sequence
@@ -456,9 +462,9 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
     rows_hv_host_to_device = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
     rows_current_host_to_device = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
 
-    cudaMalloc(&rows_d_device, longest_ad_size * sizeof(int*));
-    cudaMalloc(&rows_hv_device, longest_ad_size * sizeof(int*));
-    cudaMalloc(&rows_current_device, longest_ad_size * sizeof(int*));
+    cudaMalloc(&rows_d_device, (n_of_sequences - 1) * sizeof(int*));
+    cudaMalloc(&rows_hv_device, (n_of_sequences - 1) * sizeof(int*));
+    cudaMalloc(&rows_current_device, (n_of_sequences - 1) * sizeof(int*));
 
     for (int i = 0; i < (n_of_sequences - 1); i++)
     {
@@ -505,30 +511,35 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
 
         // Multiple sequence alignment on multiple blocks?
         dim3 block_size(curr_ad_size);
+        dim3 grid_size(n_of_sequences - 1);
+        int blocks_per_sequence = 1;
 
         if (curr_ad_size > deviceProp.maxThreadsDim[0]) {
             block_size = deviceProp.maxThreadsDim[0];
+            blocks_per_sequence = ceil(curr_ad_size / block_size.x);
+            grid_size = ((n_of_sequences - 1) * blocks_per_sequence);
         }
-
-        int blocks_per_sequence = ceil(sqrt(pow(dim1, 2) + pow(dim2, 2)) / deviceProp.maxThreadsDim[0]);
-
-        dim3 grid_size(blocks_per_sequence * (n_of_sequences - 1));
 
         multiple_ad_kernel << < grid_size, block_size >> > (sequences_device, dim2, blocks_per_sequence, rows_d_device, rows_hv_device, rows_current_device, curr_ad_size, i, score, gap_penalty);
         cudaDeviceSynchronize();
 
         if (i + 1 < num_of_ad)
         {
+            for (int l = 0; l < n_of_sequences - 1; l++)
+            {
+                rearrange_diagonals_cpu(rows_d_host_to_device, rows_hv_host_to_device, rows_current_host_to_device, l);
+            }
+            
             rearrange_diagonals << < 1, (n_of_sequences - 1) >> > (rows_d_device, rows_hv_device, rows_current_device);
         }
     }
 
-    int** rows_current_device_to_host = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
-    cudaMemcpy(rows_current_device_to_host, rows_current_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyDeviceToHost);
+    /*int** rows_current_device_to_host = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
+    cudaMemcpy(rows_current_device_to_host, rows_current_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyDeviceToHost);*/
 
     for (int i = 0; i < n_of_sequences - 1; i++)
     {
-        cudaMemcpy(rows_current_host[i], rows_current_device_to_host[i], sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(rows_current_host[i], rows_current_host_to_device[i], sizeof(int), cudaMemcpyDeviceToHost);
     }
 
     return rows_current_host;
@@ -538,7 +549,7 @@ int main(int argc, char* argv[])
 {
     char** sequences = (char**)malloc(4 * sizeof(char*));
 
-    int size_1 = 17, size_2 = 19;
+    int size_1 = 19, size_2 = 19;
     char* sequence = (char*)malloc((size_1 + 1) * sizeof(char));
 
     generate_sequence(size_1, sequence);
