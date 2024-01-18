@@ -521,7 +521,7 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
         }
 
         multiple_ad_kernel << < grid_size, block_size >> > (sequences_device, dim2, blocks_per_sequence, rows_d_device, rows_hv_device, rows_current_device, curr_ad_size, i, score, gap_penalty);
-        //cudaDeviceSynchronize();
+        cudaDeviceSynchronize();
 
         if (i + 1 < num_of_ad)
         {
@@ -547,7 +547,7 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
 
 int main(int argc, char* argv[])
 {
-    char** sequences = (char**)malloc(4 * sizeof(char*));
+    char** sequences = (char**)malloc(10 * sizeof(char*));
 
     int size_1 = 20000, size_2 = 20000;
     char* sequence = (char*)malloc((size_1 + 1) * sizeof(char));
