@@ -458,40 +458,60 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
     int** rows_d_device, ** rows_hv_device, ** rows_current_device;
     int** rows_d_host_to_device, ** rows_hv_host_to_device, ** rows_current_host_to_device;
 
-    rows_d_host_to_device = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
-    rows_hv_host_to_device = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
-    rows_current_host_to_device = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
+    cudaMallocManaged(&rows_d_device, (n_of_sequences - 1) * sizeof(int*));
+    cudaMallocManaged(&rows_hv_device, (n_of_sequences - 1) * sizeof(int*));
+    cudaMallocManaged(&rows_current_device, (n_of_sequences - 1) * sizeof(int*));
 
-    cudaMalloc(&rows_d_device, (n_of_sequences - 1) * sizeof(int*));
-    cudaMalloc(&rows_hv_device, (n_of_sequences - 1) * sizeof(int*));
-    cudaMalloc(&rows_current_device, (n_of_sequences - 1) * sizeof(int*));
-
-    for (int i = 0; i < (n_of_sequences - 1); i++)
+    for (int i = 0; i < n_of_sequences - 1; i++)
     {
-        int* row_d_device, *row_hv_device, *row_current_device;
+        cudaMalloc(&rows_d_device[i], longest_ad_size * sizeof(int));
+        int x = 0;
+        cudaMemcpy(rows_d_device[i], &x, sizeof(int), cudaMemcpyHostToDevice);
+        //rows_d_device[i][0] = 0;
 
-        int* row_d_host = (int*)malloc(sizeof(int));
-        row_d_host[0] = 0;
+        cudaMalloc(&rows_hv_device[i], longest_ad_size * sizeof(int));
+        int* y = (int*)malloc(2 * sizeof(int));
+        y[0] = -2;
+        y[1] = -2;
+        cudaMemcpy(rows_hv_device[i], y, 2 * sizeof(int), cudaMemcpyHostToDevice);
 
-        cudaMalloc(&row_d_device, longest_ad_size * sizeof(int));
-        cudaMemcpy(row_d_device, row_d_host, sizeof(int), cudaMemcpyHostToDevice);
-        rows_d_host_to_device[i] = row_d_device;
-
-        int* row_hv_host = (int*)malloc(2 * sizeof(int));
-        row_hv_host[0] = -2;
-        row_hv_host[1] = -2;
-
-        cudaMalloc(&row_hv_device, longest_ad_size * sizeof(int));
-        cudaMemcpy(row_hv_device, row_hv_host, 2 * sizeof(int), cudaMemcpyHostToDevice);
-        rows_hv_host_to_device[i] = row_hv_device;
-
-        cudaMalloc(&row_current_device, longest_ad_size * sizeof(int));
-        rows_current_host_to_device[i] = row_current_device;
+        cudaMalloc(&rows_current_device[i], longest_ad_size * sizeof(int));
     }
 
-    cudaMemcpy(rows_d_device, rows_d_host_to_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyHostToDevice);
-    cudaMemcpy(rows_hv_device, rows_hv_host_to_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyHostToDevice);
-    cudaMemcpy(rows_current_device, rows_current_host_to_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyHostToDevice);
+    //rows_d_host_to_device = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
+    //rows_hv_host_to_device = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
+    //rows_current_host_to_device = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
+
+    //cudaMalloc(&rows_d_device, (n_of_sequences - 1) * sizeof(int*));
+    //cudaMalloc(&rows_hv_device, (n_of_sequences - 1) * sizeof(int*));
+    //cudaMalloc(&rows_current_device, (n_of_sequences - 1) * sizeof(int*));
+
+    //for (int i = 0; i < (n_of_sequences - 1); i++)
+    //{
+    //    int* row_d_device, *row_hv_device, *row_current_device;
+
+        //int* row_d_host = (int*)malloc(sizeof(int));
+        //row_d_host[0] = 0;
+
+        //cudaMalloc(&row_d_device, longest_ad_size * sizeof(int));
+        //cudaMemcpy(row_d_device, row_d_host, sizeof(int), cudaMemcpyHostToDevice);
+        //rows_d_host_to_device[i] = row_d_device;
+
+        //int* row_hv_host = (int*)malloc(2 * sizeof(int));
+        //row_hv_host[0] = -2;
+        //row_hv_host[1] = -2;
+
+        //cudaMalloc(&row_hv_device, longest_ad_size * sizeof(int));
+        //cudaMemcpy(row_hv_device, row_hv_host, 2 * sizeof(int), cudaMemcpyHostToDevice);
+        //rows_hv_host_to_device[i] = row_hv_device;
+
+    //    cudaMalloc(&row_current_device, longest_ad_size * sizeof(int));
+    //    rows_current_host_to_device[i] = row_current_device;
+    //}
+
+    //cudaMemcpy(rows_d_device, rows_d_host_to_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyHostToDevice);
+    //cudaMemcpy(rows_hv_device, rows_hv_host_to_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyHostToDevice);
+    //cudaMemcpy(rows_current_device, rows_current_host_to_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyHostToDevice);
 
     for (int i = 2; i < num_of_ad; i++)
     {
@@ -521,16 +541,21 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
         }
 
         multiple_ad_kernel << < grid_size, block_size >> > (sequences_device, dim2, blocks_per_sequence, rows_d_device, rows_hv_device, rows_current_device, curr_ad_size, i, score, gap_penalty);
-        //cudaDeviceSynchronize();
+        cudaDeviceSynchronize();
 
         if (i + 1 < num_of_ad)
         {
             for (int l = 0; l < n_of_sequences - 1; l++)
             {
-                rearrange_diagonals_cpu(rows_d_host_to_device, rows_hv_host_to_device, rows_current_host_to_device, l);
+                rearrange_diagonals_cpu(rows_d_device, rows_hv_device, rows_current_device, l);
             }
-            
-            rearrange_diagonals << < 1, (n_of_sequences - 1) >> > (rows_d_device, rows_hv_device, rows_current_device);
+
+            //for (int l = 0; l < n_of_sequences - 1; l++)
+            //{
+            //    rearrange_diagonals_cpu(rows_d_host_to_device, rows_hv_host_to_device, rows_current_host_to_device, l);
+            //}
+            //
+            //rearrange_diagonals << < 1, (n_of_sequences - 1) >> > (rows_d_device, rows_hv_device, rows_current_device);
         }
     }
 
@@ -539,7 +564,8 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
 
     for (int i = 0; i < n_of_sequences - 1; i++)
     {
-        cudaMemcpy(rows_current_host[i], rows_current_host_to_device[i], sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(rows_current_host[i], rows_current_device[i], sizeof(int), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(rows_current_host[i], rows_current_host_to_device[i], sizeof(int), cudaMemcpyDeviceToHost);
     }
 
     return rows_current_host;
