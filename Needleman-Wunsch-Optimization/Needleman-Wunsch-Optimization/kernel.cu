@@ -280,7 +280,7 @@ int* sequence_alignment_gpu(const char* sequence_1, const char* sequence_2, int 
 
     int *row_d_device, *row_hv_device, *row_current_device;
 
-    int* row_current_host = (int*)malloc(longest_ad_size * sizeof(int));
+    int* row_current_host = (int*)malloc(sizeof(int));
 
     cudaMalloc(&row_d_device, longest_ad_size * sizeof(int));
     cudaMalloc(&row_hv_device, longest_ad_size * sizeof(int));
@@ -308,21 +308,24 @@ int* sequence_alignment_gpu(const char* sequence_1, const char* sequence_2, int 
         dim3 block_size(curr_ad_size);
 
         if (curr_ad_size > deviceProp.maxThreadsDim[0]) {
-            grid_size = ceil(curr_ad_size / deviceProp.maxThreadsDim[0]);
             block_size = deviceProp.maxThreadsDim[0];
+            grid_size = ceil(curr_ad_size / block_size.x);
         }
 
         ad_kernel << <grid_size, block_size >> > (sequence_1_device, sequence_2_device, row_current_device, row_d_device, row_hv_device, curr_ad_size, i, m, n, score, gap_penalty);
         
         cudaDeviceSynchronize();
-        
-        cudaMemcpy(row_current_host, row_current_device, curr_ad_size * sizeof(int), cudaMemcpyDeviceToHost);
        
-        int* old_row_d_device = row_d_device;
-        row_d_device = row_hv_device;
-        row_hv_device = row_current_device;
-        row_current_device = old_row_d_device;
+        if (i + 1 < num_of_ad)
+        {
+            int* old_row_d_device = row_d_device;
+            row_d_device = row_hv_device;
+            row_hv_device = row_current_device;
+            row_current_device = old_row_d_device;
+        }
     }
+
+    cudaMemcpy(row_current_host, row_current_device, sizeof(int), cudaMemcpyDeviceToHost);
 
     //cudaFree(sequence_1_device);
     //cudaFree(sequence_2_device);
@@ -547,9 +550,9 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
 
 int main(int argc, char* argv[])
 {
-    char** sequences = (char**)malloc(10 * sizeof(char*));
+    char** sequences = (char**)malloc(100 * sizeof(char*));
 
-    int size_1 = 20000, size_2 = 20000;
+    int size_1 = 16, size_2 = 12;
     char* sequence = (char*)malloc((size_1 + 1) * sizeof(char));
 
     generate_sequence(size_1, sequence);
@@ -576,14 +579,14 @@ int main(int argc, char* argv[])
 
     auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
     
-    std::cout << "Needed time in microseconds: " << microseconds_gpu.count() << std::endl;
-    //for (int i = 0; i < 3; i++)
-    //{
-    //    std::cout << results[i][0] << std::endl;
-    //}
+    //std::cout << "Needed time in microseconds: " << microseconds_gpu.count() << std::endl;
+    for (int i = 0; i < 3; i++)
+    {
+        std::cout << results[i][0] << std::endl;
+    }
 
-    //int* result = sequence_alignment_gpu(sequences[0], sequences[1], size_1, size_2);
-    //std::cout << result[0] << std::endl;
+    int* result = sequence_alignment_gpu(sequences[0], sequences[1], size_1, size_2);
+    std::cout << result[0] << std::endl;
 
 
 }
