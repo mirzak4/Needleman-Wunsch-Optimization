@@ -256,13 +256,13 @@ void initialize_d_hv_rows(int* &row_d_device, int* &row_hv_device)
 
     cudaMemcpy(row_d_device, row_d_host, sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(row_hv_device, row_hv_host, 2 * sizeof(int), cudaMemcpyHostToDevice);
+
+    free(row_d_host);
+    free(row_hv_host);
 }
 
-int* sequence_alignment_gpu(const char* sequence_1, const char* sequence_2, int m, int n)
+int* sequence_alignment_gpu(const char* sequence_1, const char* sequence_2, int m, int n, int score, int gap_penalty)
 {
-    int gap_penalty = -2;
-    int score = 1;
-
     cudaDeviceProp deviceProp;
     cudaGetDeviceProperties(&deviceProp, 0);
 
@@ -327,11 +327,11 @@ int* sequence_alignment_gpu(const char* sequence_1, const char* sequence_2, int 
 
     cudaMemcpy(row_current_host, row_current_device, sizeof(int), cudaMemcpyDeviceToHost);
 
-    //cudaFree(sequence_1_device);
-    //cudaFree(sequence_2_device);
-    //cudaFree(row_d_device);
-    //cudaFree(row_hv_device);
-    //cudaFree(row_current_device);
+    cudaFree(sequence_1_device);
+    cudaFree(sequence_2_device);
+    cudaFree(row_d_device);
+    cudaFree(row_hv_device);
+    cudaFree(row_current_device);
 
     return row_current_host;
 }
@@ -479,6 +479,7 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
         cudaMalloc(&row_d_device, longest_ad_size * sizeof(int));
         cudaMemcpy(row_d_device, row_d_host, sizeof(int), cudaMemcpyHostToDevice);
         rows_d_host_to_device[i] = row_d_device;
+        free(row_d_host);
 
         int* row_hv_host = (int*)malloc(2 * sizeof(int));
         row_hv_host[0] = -2;
@@ -487,6 +488,7 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
         cudaMalloc(&row_hv_device, longest_ad_size * sizeof(int));
         cudaMemcpy(row_hv_device, row_hv_host, 2 * sizeof(int), cudaMemcpyHostToDevice);
         rows_hv_host_to_device[i] = row_hv_device;
+        free(row_hv_host);
 
         cudaMalloc(&row_current_device, longest_ad_size * sizeof(int));
         rows_current_host_to_device[i] = row_current_device;
@@ -512,7 +514,6 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
             curr_ad_size = max(min_m_n, i - min_m_n + 1);
         }
 
-        // Multiple sequence alignment on multiple blocks?
         dim3 block_size(curr_ad_size);
         dim3 grid_size(n_of_sequences - 1);
         int blocks_per_sequence = 1;
@@ -527,66 +528,148 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
         cudaDeviceSynchronize();
 
         if (i + 1 < num_of_ad)
-        {
-            for (int l = 0; l < n_of_sequences - 1; l++)
-            {
-                rearrange_diagonals_cpu(rows_d_host_to_device, rows_hv_host_to_device, rows_current_host_to_device, l);
-            }
-            
+        {            
             rearrange_diagonals << < 1, (n_of_sequences - 1) >> > (rows_d_device, rows_hv_device, rows_current_device);
         }
     }
 
-    /*int** rows_current_device_to_host = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
-    cudaMemcpy(rows_current_device_to_host, rows_current_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyDeviceToHost);*/
+    int** rows_current_device_to_host = (int**)malloc((n_of_sequences - 1) * sizeof(int*));
+    cudaMemcpy(rows_current_device_to_host, rows_current_device, (n_of_sequences - 1) * sizeof(int*), cudaMemcpyDeviceToHost);
 
     for (int i = 0; i < n_of_sequences - 1; i++)
     {
-        cudaMemcpy(rows_current_host[i], rows_current_host_to_device[i], sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(rows_current_host[i], rows_current_device_to_host[i], sizeof(int), cudaMemcpyDeviceToHost);
     }
+
+    // Free memory
+    for (int i = 0; i < n_of_sequences; i++)
+    {
+        // Free memory allocated for each sequence
+        cudaFree(sequences_host[i]);
+
+        // Free memory allocate for three diagonals of each sequence alignment score matrix
+        cudaFree(rows_d_host_to_device[i]);
+        cudaFree(rows_hv_host_to_device[i]);
+        cudaFree(rows_current_host_to_device[i]);
+    }
+
+    // Free memory for array of sequences
+    cudaFree(sequences_device);
+    free(sequences_host);
+
+    // Free memory allocated for arrays of three diagonals
+    cudaFree(rows_d_device);
+    cudaFree(rows_hv_device);
+    cudaFree(rows_current_device);
+    free(rows_d_host_to_device);
+    free(rows_hv_host_to_device);
+    free(rows_current_host_to_device);
+    free(rows_current_device_to_host);
 
     return rows_current_host;
 }
 
 int main(int argc, char* argv[])
 {
-    char** sequences = (char**)malloc(100 * sizeof(char*));
+#pragma region Custom_Test_with_Results_Printed
 
-    int size_1 = 16, size_2 = 12;
-    char* sequence = (char*)malloc((size_1 + 1) * sizeof(char));
+    //// Define how many sequence we will have in multiple sequence alignment? 
+    //// (Include main sequence which will be aligned with other sequences)
+    //int no_of_sequences = 4;
 
-    generate_sequence(size_1, sequence);
-    sequences[0] = sequence;
+    //char** sequences = (char**)malloc(no_of_sequences * sizeof(char*));
+
+    //// Define size for main sequence (size_1) and for other sequences(size_2)
+    //int size_1 = 19, size_2 = 19;
+
+    //// Generate main sequence
+    //char* sequence = (char*)malloc((size_1 + 1) * sizeof(char));
+    //generate_sequence(size_1, sequence);
+    //sequences[0] = sequence;
     //std::cout << sequence << std::endl;
 
-    for (int i = 1; i < 4; i++)
-    {
-        char* c_sequence_i = (char*)malloc((size_2 + 1) * sizeof(char));
-        generate_sequence(size_2, c_sequence_i);
-        //std::cout << c_sequence_i << std::endl;
-        sequences[i] = c_sequence_i;
-    }
-    //sequences[0] = "TGACACCCATGTTAGTCG";
-    //sequences[1] = "TGCGGGAATAATGG";
-    //sequences[2] = "AGGTGAACTAGGAG";
-    //sequences[3] = "AGGTTCGCCAGTGC";
+    //// Generate other sequences
+    //for (int i = 1; i < no_of_sequences; i++)
+    //{
+    //    char* c_sequence_i = (char*)malloc((size_2 + 1) * sizeof(char));
+    //    generate_sequence(size_2, c_sequence_i);
+    //    std::cout << c_sequence_i << std::endl;
+    //    sequences[i] = c_sequence_i;
+    //}
 
+    //// Perform multiple sequence alignment
+    //int** results = multiple_sequence_alignment_gpu(sequences, size_1, size_2, no_of_sequences, 1, -2);
+
+    //// Print results
+    //for (int i = 0; i < no_of_sequences - 1; i++)
+    //{
+    //    std::cout << results[i][0] << std::endl;
+    //}
+
+    //// Perform single sequence alignment between main sequence and the second one
+    //int* result = sequence_alignment_gpu(sequences[0], sequences[1], size_1, size_2, 1, -2);
+    //std::cout << result[0] << std::endl;
+
+#pragma endregion
+
+#pragma region Single_Sequence_Alignment_Stopwatch
+
+    // Define size for both sequences
+    int size_1 = 100000, size_2 = 100000;
+
+    // Generate sequences
+    char* sequence_1, * sequence_2;
+    sequence_1 = (char*)malloc(size_1 * sizeof(char));
+    sequence_2 = (char*)malloc(size_2 * sizeof(char));
+    generate_sequence(size_1, sequence_1);
+    generate_sequence(size_2, sequence_2);
+
+    // Perform single sequence alignment
     auto start_gpu = std::chrono::high_resolution_clock::now();
 
-    int** results = multiple_sequence_alignment_gpu(sequences, size_1, size_2, 4, 1, -2);
+    int* result = sequence_alignment_gpu(sequence_1, sequence_2, size_1, size_2, 1, -2);
 
     auto finish_gpu = std::chrono::high_resolution_clock::now();
-
-    auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
     
-    //std::cout << "Needed time in microseconds: " << microseconds_gpu.count() << std::endl;
-    for (int i = 0; i < 3; i++)
-    {
-        std::cout << results[i][0] << std::endl;
-    }
+    auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
+    std::cout << "Needed time in seconds: " << microseconds_gpu.count() / 1000000 << std::endl;
 
-    int* result = sequence_alignment_gpu(sequences[0], sequences[1], size_1, size_2);
-    std::cout << result[0] << std::endl;
+#pragma endregion
 
+#pragma region Multiple_Sequence_Alignment_Stopwatch
 
+    //// Define how many sequence we will have in multiple sequence alignment? 
+    //// (Include main sequence which will be aligned with other sequences)
+    //int no_of_sequences = 4;
+
+    //char** sequences = (char**)malloc(no_of_sequences * sizeof(char*));
+
+    //// Define size for main sequence (size_1) and for other sequences(size_2)
+    //int size_1 = 100000, size_2 = 100000;
+
+    //// Generate main sequence
+    //char* sequence = (char*)malloc((size_1 + 1) * sizeof(char));
+    //generate_sequence(size_1, sequence);
+    //sequences[0] = sequence;
+
+    //// Generate other sequences
+    //for (int i = 1; i < no_of_sequences; i++)
+    //{
+    //    char* c_sequence_i = (char*)malloc((size_2 + 1) * sizeof(char));
+    //    generate_sequence(size_2, c_sequence_i);
+    //    sequences[i] = c_sequence_i;
+    //}
+
+    //// Perform multiple sequence alignment
+    //auto start_gpu = std::chrono::high_resolution_clock::now();
+
+    //int** results = multiple_sequence_alignment_gpu(sequences, size_1, size_2, no_of_sequences, 1, -2);
+
+    //auto finish_gpu = std::chrono::high_resolution_clock::now();
+
+    //auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
+
+    //std::cout << "Needed time in seconds: " << microseconds_gpu.count() / 1000000 << std::endl;
+
+#pragma endregion
 }
