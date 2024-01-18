@@ -521,7 +521,7 @@ int** multiple_sequence_alignment_gpu(char** sequences, int dim1, int dim2, int 
         }
 
         multiple_ad_kernel << < grid_size, block_size >> > (sequences_device, dim2, blocks_per_sequence, rows_d_device, rows_hv_device, rows_current_device, curr_ad_size, i, score, gap_penalty);
-        cudaDeviceSynchronize();
+        //cudaDeviceSynchronize();
 
         if (i + 1 < num_of_ad)
         {
@@ -549,18 +549,18 @@ int main(int argc, char* argv[])
 {
     char** sequences = (char**)malloc(4 * sizeof(char*));
 
-    int size_1 = 19, size_2 = 19;
+    int size_1 = 20000, size_2 = 20000;
     char* sequence = (char*)malloc((size_1 + 1) * sizeof(char));
 
     generate_sequence(size_1, sequence);
     sequences[0] = sequence;
-    std::cout << sequence << std::endl;
+    //std::cout << sequence << std::endl;
 
     for (int i = 1; i < 4; i++)
     {
         char* c_sequence_i = (char*)malloc((size_2 + 1) * sizeof(char));
         generate_sequence(size_2, c_sequence_i);
-        std::cout << c_sequence_i << std::endl;
+        //std::cout << c_sequence_i << std::endl;
         sequences[i] = c_sequence_i;
     }
     //sequences[0] = "TGACACCCATGTTAGTCG";
@@ -568,15 +568,22 @@ int main(int argc, char* argv[])
     //sequences[2] = "AGGTGAACTAGGAG";
     //sequences[3] = "AGGTTCGCCAGTGC";
 
+    auto start_gpu = std::chrono::high_resolution_clock::now();
+
     int** results = multiple_sequence_alignment_gpu(sequences, size_1, size_2, 4, 1, -2);
 
-    for (int i = 0; i < 3; i++)
-    {
-        std::cout << results[i][0] << std::endl;
-    }
+    auto finish_gpu = std::chrono::high_resolution_clock::now();
 
-    int* result = sequence_alignment_gpu(sequences[0], sequences[1], size_1, size_2);
-    std::cout << result[0] << std::endl;
+    auto microseconds_gpu = std::chrono::duration_cast<std::chrono::microseconds>(finish_gpu - start_gpu);
+    
+    std::cout << "Needed time in microseconds: " << microseconds_gpu.count() << std::endl;
+    //for (int i = 0; i < 3; i++)
+    //{
+    //    std::cout << results[i][0] << std::endl;
+    //}
+
+    //int* result = sequence_alignment_gpu(sequences[0], sequences[1], size_1, size_2);
+    //std::cout << result[0] << std::endl;
 
 
 }
