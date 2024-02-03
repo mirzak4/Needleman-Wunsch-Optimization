@@ -1,10 +1,11 @@
-﻿/************************************************************************************************
+﻿/**************************************************************************************************************
 *						This code is written by Mirza Kadric
-*						Publication name: Needleman Wunsch Optimization for Pairwise and Multiple Sequence Alignment
+*						Publication name: Optimizing the Needleman-Wunsch Algorithm through GPU Parallelization 
+*                                         for Enhanced Computational Efficiency in Phylogenetic Analysis
 *						Authors			: Mirza Kadric, Anida Nezovic, Adna Mehanovic, Selma Kurtovic
 *						INSTITUTION		: Faculty of Electrical Engineering, University of Sarajevo
 *						DEPARTMENT		: Department of Computing and Informatics
-*************************************************************************************************/
+**************************************************************************************************************/
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include "device_functions.h"
