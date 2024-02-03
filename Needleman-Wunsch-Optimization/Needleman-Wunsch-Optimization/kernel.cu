@@ -32,17 +32,6 @@ char get_char()
     return alphabet[rand_index];
 }
 
-//const char* generate_sequence(int size)
-//{
-//    std::string result = "";
-//    for (int i = 0; i < size; i++)
-//    {
-//        result.push_back(get_char());
-//    }
-//
-//    return result.c_str();
-//}
-
 void generate_sequence(int size, char* &a)
 {
     int i = 0;
